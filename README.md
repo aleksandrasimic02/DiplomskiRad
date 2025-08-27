@@ -6,8 +6,8 @@
 ## Pokretanje
 
 ```bash
-git clone https://github.com/aleksandrasimic02/DiplomskiAleksandra.git
-cd DiplomskiAleksandra
+git clone https://github.com/aleksandrasimic02/DiplomskiRad.git
+cd DiplomskiRad
 docker compose up --build
 ```
 
