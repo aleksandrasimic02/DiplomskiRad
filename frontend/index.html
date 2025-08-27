@@ -1,0 +1,1901 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8" />
+  <title>MediPlan – Frontend (Tailwind)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind preko CDN-a -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script> tailwind.config = { darkMode: 'class' };</script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+<header id="topbar" class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-gray-200">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4 flex-wrap">
+    <!-- BRAND: logo + naziv → vodi na #/ -->
+    <a href="#/" class="flex items-center gap-2 group">
+      <!-- inline logo -->
+      <a href="#/" class="flex items-center gap-2 group">
+          <img src="/static/assets/logo.png" alt="MediPlan logo" class="w-16 h-16 object-contain" />
+          <span class="text-xl font-bold group-hover:underline">MediPlan</span>
+        </a>
+
+    </a>
+
+    <!-- javna navigacija (nema “Početna”) -->
+    <nav id="nav-public" class="text-sm space-x-3">
+      <a href="#/pregled-lekova" class="hover:underline">Pregled lekova</a>
+      <a href="#/pregled-apoteka" class="hover:underline">Pregled apoteka</a>
+    </nav>
+
+    <span class="flex-1"></span>
+    <nav id="nav-auth" class="text-sm space-x-2"></nav>
+  </div>
+</header>
+
+
+<main id="app" class="max-w-6xl mx-auto px-4 py-6">Učitavanje…</main>
+
+<script>
+/* ------------------------------------------------------------------ *
+ *  GLOBAL
+ * ------------------------------------------------------------------ */
+let stavkeDraft = []; // { id_leka, naziv, potreban_recept, recept_dokument (fileId)?, recept_filename?, ... }
+
+/* ------------------------------------------------------------------ *
+ *  API
+ * ------------------------------------------------------------------ */
+ const API_BASE = window.location.origin;
+
+async function api(path, {method='GET', body=null, auth=true, query=null}={}){
+  const headers = {'Content-Type':'application/json'};
+  if (auth && getToken()) headers['Authorization'] = 'Bearer ' + getToken();
+  const url = new URL(API_BASE + path);
+  if (query) Object.entries(query).forEach(([k,v]) => { if (v!==undefined && v!==null && v!=='') url.searchParams.set(k, v) });
+  const resp = await fetch(url.toString(), {method, headers, body: body ? JSON.stringify(body) : null});
+  if (!resp.ok){
+    let detail = '';
+    try { const err = await resp.json(); detail = err.detail || JSON.stringify(err); } catch {}
+    throw new Error(detail || (`HTTP ${resp.status}`));
+  }
+  if (resp.status === 204) return null;
+  try { return await resp.json(); } catch { return null; }
+}
+
+/** Upload fajla na /files/upload (multipart) */
+async function apiUpload(path, file, {auth=true, fieldName='file'}={}){
+  const fd = new FormData();
+  fd.append(fieldName, file, file.name);
+  const headers = {};
+  if (auth && getToken()) headers['Authorization'] = 'Bearer ' + getToken();
+  const resp = await fetch(API_BASE + path, { method:'POST', headers, body: fd });
+  if (!resp.ok){
+    let msg = `HTTP ${resp.status}`;
+    try { const j = await resp.json(); msg = j.detail || JSON.stringify(j); } catch {}
+    throw new Error(msg);
+  }
+  return await resp.json();
+}
+
+/** URL za preuzimanje fajla po ID-u */
+function fileHref(id){ return API_BASE + '/files/' + encodeURIComponent(id); }
+
+/* ------------------------------------------------------------------ *
+ *  AUTH
+ * ------------------------------------------------------------------ */
+function b64urlDecode(str){
+  str = str.replace(/-/g,'+').replace(/_/g,'/');
+  const pad = str.length % 4 ? 4 - (str.length % 4) : 0;
+  return atob(str + '='.repeat(pad));
+}
+function parseJwt(token){ try{ return JSON.parse(b64urlDecode(token.split('.')[1])); }catch{ return null; } }
+function saveToken(token){
+  localStorage.setItem('token', token);
+  const claims = parseJwt(token) || {};
+  localStorage.setItem('claims', JSON.stringify(claims));
+  renderNav();
+}
+function getToken(){ return localStorage.getItem('token'); }
+function getClaims(){ try { return JSON.parse(localStorage.getItem('claims')||'{}'); } catch { return {}; } }
+function logout(){
+  localStorage.removeItem('token'); localStorage.removeItem('claims');
+  renderNav(); location.hash = '#/login';
+}
+
+/* ------------------------------------------------------------------ *
+ *  NAV
+ * ------------------------------------------------------------------ */
+function renderNav(){
+  const el = document.getElementById('nav-auth');
+  const claims = getClaims();
+  const logged = !!getToken();
+  if (!logged){
+    el.innerHTML = `
+      <a href="#/login" class="px-3 py-1 rounded-md border border-gray-300 hover:bg-gray-100">Login</a>
+      <a href="#/register" class="px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700">Register</a>
+    `;
+    return;
+  }
+  const role = claims.type;
+  const pill = r => `<span class="px-2 py-0.5 rounded-full text-xs border border-gray-300 bg-gray-100">${r}</span>`;
+  const links = [];
+  if (role === 'korisnik'){
+    links.push('<a href="#/profil/korisnik" class="px-2 py-1 rounded hover:bg-gray-100">Moj profil</a>');
+    links.push('<a href="#/korisnik/pretplate" class="px-2 py-1 rounded hover:bg-gray-100">Moje pretplate</a>');
+    links.push('<a href="#/korisnik/dodaj-pretplatu" class="px-2 py-1 rounded hover:bg-gray-100">Dodaj pretplatu</a>');
+  } else if (role === 'apoteka'){
+    links.push('<a href="#/profil/apoteka" class="px-2 py-1 rounded hover:bg-gray-100">Profil apoteke</a>');
+    links.push('<a href="#/apoteka/lekovi" class="px-2 py-1 rounded hover:bg-gray-100">Moji lekovi</a>');
+    links.push('<a href="#/apoteka/dodaj-lek" class="px-2 py-1 rounded hover:bg-gray-100">Dodaj lek</a>');
+    links.push('<a href="#/apoteka/pretplate" class="px-2 py-1 rounded hover:bg-gray-100">Pretplate</a>');
+  } else if (role === 'staratelj'){
+    links.push('<a href="#/profil/staratelj" class="px-2 py-1 rounded hover:bg-gray-100">Moj profil</a>');
+    links.push('<a href="#/korisnik/pretplate" class="px-2 py-1 rounded hover:bg-gray-100">Pretplate korisnika</a>');
+    links.push('<a href="#/korisnik/dodaj-pretplatu" class="px-2 py-1 rounded hover:bg-gray-100">Dodaj pretplatu</a>');
+  } else if (role === 'admin'){
+    links.push('<a href="#/profil/admin" class="px-2 py-1 rounded hover:bg-gray-100">Admin profil</a>');
+    links.push('<a href="#/admin/odobri-nalog" class="px-2 py-1 rounded hover:bg-gray-100">Odobri nalog</a>');
+  }
+  links.push('<a href="#/obrisi-nalog" class="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700">Obriši nalog</a>');
+  links.push('<a href="#/logout" class="px-2 py-1 rounded border border-gray-300 hover:bg-gray-100" onclick="logout();return false;">Logout</a>');
+  el.innerHTML = `${pill(role)} ` + links.join(' ');
+}
+
+/* ------------------------------------------------------------------ *
+ *  ROUTER
+ * ------------------------------------------------------------------ */
+const routes = {
+  '#/': renderHome,
+  '#/login': renderLogin,
+  '#/register': renderRegister,
+
+  '#/profil/apoteka': renderProfilApoteka,
+  '#/profil/korisnik': renderProfilKorisnik,
+  '#/profil/staratelj': renderProfilStaratelj,
+  '#/profil/admin': renderProfilAdmin,
+
+  '#/pregled-lekova': renderPregledLekova,
+  '#/pregled-apoteka': renderPregledApoteka,
+
+  '#/apoteka/lekovi': renderApotekaLekovi,
+  '#/apoteka/pretplate': renderApotekaPretplate,
+  '#/apoteka/dodaj-lek': renderDodajLek,
+  '#/apoteka/obrisi-lek': renderObrisiLek,
+
+  '#/korisnik/pretplate': renderKorisnikPretplate,
+  '#/korisnik/dodaj-pretplatu': renderDodajPretplatu,
+  '#/korisnik/otkazi-pretplatu': renderOtkaziPretplatu,
+
+  '#/admin/odobri-nalog': renderAdminOdobriNalog,
+  '#/obrisi-nalog': renderObrisiNalog,
+};
+
+async function router(){
+  const hash = location.hash || '#/';
+  const screen = routes[hash.split('?')[0]] || renderNotFound;
+  try {
+    await screen();
+    enhanceUI();
+  } catch (err) {
+    document.getElementById('app').innerHTML = `<p class="text-red-700">Greška: ${escapeHtml(err.message)}</p>`;
+    enhanceUI();
+  }
+}
+window.addEventListener('hashchange', router);
+window.addEventListener('DOMContentLoaded', () => { renderNav(); router(); });
+
+/* ------------------------------------------------------------------ *
+ *  GUARDS & HELPERS
+ * ------------------------------------------------------------------ */
+function requireRole(...roles){
+  const claims = getClaims();
+  if (!getToken()) throw new Error('Niste prijavljeni.');
+  if (!roles.includes(claims.type)) throw new Error('Zabranjen pristup.');
+}
+function escapeHtml(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function appLogo(size = 72){
+  const s = Math.round(size);
+  return `<img src="/static/assets/logo.png" alt="MediPlan logo" width="${s}" height="${s}" class="inline-block object-contain align-middle" />`;
+}
+
+/* ------------------------------------------------------------------ *
+ *  SCREENS
+ * ------------------------------------------------------------------ */
+async function renderHome(){
+  const logged = !!getToken();
+  const claims = getClaims();
+  const canCreate = logged && ['korisnik','staratelj'].includes(claims.type);
+
+  const primaryHref = canCreate ? '#/korisnik/dodaj-pretplatu' : '#/register';
+  const primaryText = canCreate ? 'Kreiraj pretplatu' : 'Registracija';
+  const secondaryHref = logged ? '#/korisnik/pretplate' : '#/login';
+  const secondaryText = logged ? 'Moje pretplate' : 'Prijava';
+
+  document.getElementById('app').innerHTML = `
+    <section class="relative overflow-hidden">
+      <div class="grid lg:grid-cols-2 gap-10 items-center">
+        <!-- LEVO: Hero tekst + CTA -->
+        <div>
+          <div class="flex items-center gap-3 mb-4">
+            <div class="shrink-0">${appLogo(64)}</div>
+            <h1 class="text-3xl md:text-4xl font-bold leading-tight">MediPlan — pametna pretplata na lekove</h1>
+          </div>
+          <p class="text-gray-700 text-lg">
+            MediPlan pojednostavljuje redovno naručivanje terapije. Odaberite lekove iz željene apoteke,
+            otpremite recepte (ako su potrebni), izaberite dan u mesecu za isporuku i gotovi ste.
+            Apoteka odobrava pretplatu i isporuka stiže automatski svakog meseca.
+          </p>
+
+          <div class="mt-6 flex flex-wrap gap-3">
+            <a href="${primaryHref}" class="btn">${primaryText}</a>
+            <a href="${secondaryHref}" class="px-3 py-2 rounded-md border border-gray-300 hover:bg-gray-100">${secondaryText}</a>
+            <a href="#/pregled-lekova" class="px-3 py-2 rounded-md border border-gray-300 hover:bg-gray-100">Pregled lekova</a>
+            <a href="#/pregled-apoteka" class="px-3 py-2 rounded-md border border-gray-300 hover:bg-gray-100">Pregled apoteka</a>
+          </div>
+
+          <ul class="mt-6 grid sm:grid-cols-2 gap-3 text-sm">
+            <li class="flex items-start gap-2"><span>✅</span><span>Automatska mesečna isporuka po danu koji odaberete</span></li>
+            <li class="flex items-start gap-2"><span>✅</span><span>Dodavanje recepata u par klikova (PDF/JPG/PNG)</span></li>
+            <li class="flex items-start gap-2"><span>✅</span><span>Transparentne cene — vidljive po stavci</span></li>
+            <li class="flex items-start gap-2"><span>✅</span><span>Starateljski nalozi uz admin odobrenje</span></li>
+          </ul>
+        </div>
+
+        <!-- DESNO: “Kako funkcioniše” kartica -->
+        <div class="card">
+          <div class="flex items-center gap-3">
+            ${appLogo(48)}
+            <div>
+              <div class="font-semibold">Kako funkcioniše?</div>
+              <p class="text-gray-600 text-sm">Kratak vodič kroz MediPlan</p>
+            </div>
+          </div>
+          <ol class="list-decimal ml-6 mt-4 text-gray-700 space-y-2">
+            <li>Registrujte se i/ili se prijavite.</li>
+            <li>Pretražite lekove i dodajte ih u pretplatu (sve iz iste apoteke).</li>
+            <li>Za lekove na recept — otpremite dokument.</li>
+            <li>Izaberite dan u mesecu i potvrdite pretplatu.</li>
+            <li>Apoteka odobrava i isporučuje po planu.</li>
+          </ol>
+          <div class="mt-5">
+            <a href="${primaryHref}" class="btn">${primaryText}</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+
+async function renderLogin(){
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-4">Login</h2>
+
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button class="btn" onclick="showTab('korisnik')">Korisnik</button>
+      <button class="btn" onclick="showTab('apoteka')">Apoteka</button>
+      <button class="btn" onclick="showTab('staratelj')">Staratelj</button>
+      <button class="btn" onclick="showTab('admin')">Admin</button>
+    </div>
+
+    <div id="tabs">
+      <!-- Korisnik -->
+      <div id="login-korisnik" class="card">
+        <h3 class="text-lg font-semibold mb-2">Korisnik</h3>
+        <form id="form-login-korisnik" class="space-y-3">
+          <div>
+            <label for="kor_email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input id="kor_email" name="email" type="email" placeholder="npr. korisnik@example.com" autocomplete="username" required />
+          </div>
+          <div>
+            <label for="kor_pass" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+            <input id="kor_pass" name="lozinka" type="password" placeholder="Lozinka" autocomplete="current-password" required />
+          </div>
+          <button class="btn w-full">Uloguj se</button>
+        </form>
+      </div>
+
+      <!-- Apoteka -->
+      <div id="login-apoteka" class="card hidden">
+        <h3 class="text-lg font-semibold mb-2">Apoteka</h3>
+        <form id="form-login-apoteka" class="space-y-3">
+          <div>
+            <label for="apo_email" class="block text-sm font-medium text-gray-700 mb-1">Mejl apoteke</label>
+            <input id="apo_email" name="mejl" type="email" placeholder="npr. apoteka@example.com" autocomplete="username" required />
+          </div>
+          <div>
+            <label for="apo_pass" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+            <input id="apo_pass" name="lozinka" type="password" placeholder="Lozinka" autocomplete="current-password" required />
+          </div>
+          <button class="btn w-full">Uloguj se</button>
+        </form>
+      </div>
+
+      <!-- Staratelj -->
+      <div id="login-staratelj" class="card hidden">
+        <h3 class="text-lg font-semibold mb-2">Staratelj</h3>
+        <form id="form-login-staratelj" class="space-y-3">
+          <div>
+            <label for="sta_email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input id="sta_email" name="email" type="email" placeholder="npr. staratelj@example.com" autocomplete="username" required />
+          </div>
+          <div>
+            <label for="sta_user" class="block text-sm font-medium text-gray-700 mb-1">ID korisnika</label>
+            <input id="sta_user" name="id_korisnika" type="number" min="1" placeholder="ID korisnika" required />
+          </div>
+          <div>
+            <label for="sta_pass" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+            <input id="sta_pass" name="lozinka" type="password" placeholder="Lozinka" autocomplete="current-password" required />
+          </div>
+          <button class="btn w-full">Uloguj se</button>
+        </form>
+      </div>
+
+      <!-- Admin -->
+      <div id="login-admin" class="card hidden">
+        <h3 class="text-lg font-semibold mb-2">Admin</h3>
+        <form id="form-login-admin" class="space-y-3">
+          <div>
+            <label for="adm_email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input id="adm_email" name="email" type="email" placeholder="npr. admin@example.com" autocomplete="username" required />
+          </div>
+          <div>
+            <label for="adm_pass" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+            <input id="adm_pass" name="lozinka" type="password" placeholder="Lozinka" autocomplete="current-password" required />
+          </div>
+          <button class="btn w-full">Uloguj se</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="text-gray-600 mt-2">Nemaš nalog? <a href="#/register" class="text-blue-600 hover:underline">Registracija</a></p>
+  `;
+
+  function bindLogin(id, path){
+    document.getElementById(id).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      try{
+        const res = await api(`/auth/login/${path}`, { method:'POST', body:data, auth:false });
+        saveToken(res.access_token);
+        location.hash = '#/';
+      }catch(err){
+        alert('Greška: ' + (err?.message || err));
+      }
+    });
+  }
+  bindLogin('form-login-korisnik','korisnik');
+  bindLogin('form-login-apoteka','apoteka');
+  bindLogin('form-login-staratelj','staratelj');
+  bindLogin('form-login-admin','admin');
+
+  window.showTab = (name) => {
+    ['korisnik','apoteka','staratelj','admin'].forEach(x=>{
+      document.getElementById('login-'+x).classList.toggle('hidden', x!==name);
+    });
+  };
+}
+
+async function renderRegister(){
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-4">Registracija</h2>
+
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button class="btn" onclick="showReg('korisnik')">Korisnik</button>
+      <button class="btn" onclick="showReg('apoteka')">Apoteka</button>
+      <button class="btn" onclick="showReg('staratelj')">Staratelj</button>
+      <button class="btn" onclick="showReg('admin')">Admin</button>
+    </div>
+
+    <!-- KORISNIK -->
+    <div id="reg-korisnik" class="card">
+      <h3 class="text-lg font-semibold mb-2">Korisnik</h3>
+      <form id="form-reg-korisnik" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Ime</label>
+          <input name="ime" placeholder="Ime" autocomplete="given-name" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Prezime</label>
+          <input name="prezime" placeholder="Prezime" autocomplete="family-name" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Datum rođenja</label>
+          <input name="datum_rodjenja" type="date" placeholder="YYYY-MM-DD" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Adresa</label>
+          <input name="adresa" placeholder="Adresa" autocomplete="street-address" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <input name="email" type="email" placeholder="korisnik@example.com" autocomplete="email" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Broj telefona</label>
+          <input name="broj_telefona" type="tel" placeholder="+381..." autocomplete="tel" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+          <input name="lozinka" type="password" placeholder="Lozinka" autocomplete="new-password" required />
+        </div>
+        <button class="btn w-full">Registruj</button>
+      </form>
+    </div>
+
+    <!-- APOTEKA -->
+    <div id="reg-apoteka" class="card hidden">
+      <h3 class="text-lg font-semibold mb-2">Apoteka</h3>
+      <form id="form-reg-apoteka" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Naziv</label>
+          <input name="naziv" placeholder="Naziv apoteke" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Mejl</label>
+          <input name="mejl" type="email" placeholder="apoteka@example.com" autocomplete="email" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Adresa</label>
+          <input name="adresa" placeholder="Adresa" autocomplete="street-address" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+          <input name="lozinka" type="password" placeholder="Lozinka" autocomplete="new-password" required />
+        </div>
+        <button class="btn w-full">Registruj</button>
+      </form>
+    </div>
+
+    <!-- STARATELJ -->
+    <div id="reg-staratelj" class="card hidden">
+      <h3 class="text-lg font-semibold mb-2">Staratelj</h3>
+      <form id="form-reg-staratelj" class="space-y-3" enctype="multipart/form-data">
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Ime</label>
+            <input name="ime" placeholder="Ime" required />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Prezime</label>
+            <input name="prezime" placeholder="Prezime" required />
+          </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input name="email" type="email" placeholder="staratelj@example.com" autocomplete="email" required />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Broj telefona</label>
+            <input name="broj_telefona" type="tel" placeholder="+381..." autocomplete="tel" required />
+          </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">ID korisnika</label>
+            <input name="id_korisnika" type="number" min="1" placeholder="ID korisnika" required />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Dokument starateljstva</label>
+            <input name="dokument_file" type="file" accept=".pdf,.jpg,.jpeg,.png" required />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+          <input name="lozinka" type="password" placeholder="Lozinka" autocomplete="new-password" required />
+        </div>
+        <button class="btn w-full">Registruj</button>
+      </form>
+    </div>
+
+    <!-- ADMIN -->
+    <div id="reg-admin" class="card hidden">
+      <h3 class="text-lg font-semibold mb-2">Admin</h3>
+      <form id="form-reg-admin" class="space-y-3">
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Ime</label>
+            <input name="ime" placeholder="Ime" required />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Prezime</label>
+            <input name="prezime" placeholder="Prezime" required />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <input name="email" type="email" placeholder="admin@example.com" autocomplete="email" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+          <input name="lozinka" type="password" placeholder="Lozinka" autocomplete="new-password" required />
+        </div>
+        <button class="btn w-full">Registruj</button>
+      </form>
+    </div>
+  `;
+
+  // tabs
+  window.showReg = (name) => {
+    ['korisnik','apoteka','staratelj','admin'].forEach(x=>{
+      document.getElementById('reg-'+x).classList.toggle('hidden', x!==name);
+    });
+  };
+
+  // helper za slanje (sa uploadom dokumenta za staratelja)
+  function bind(id, path){
+    document.getElementById(id).addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const form = e.target;
+      const fd = new FormData(form);
+
+      try{
+        let payload = Object.fromEntries(fd.entries());
+
+        if (path === 'staratelj'){
+          const file = form.querySelector('input[name="dokument_file"]').files[0];
+          if (!file) { alert('Dodaj dokument starateljstva.'); return; }
+          const up = await apiUpload('/files/upload', file, { auth:false });
+          payload.dokument_starateljstva = up.id; // BE zahteva string/ID
+          delete payload.dokument_file;
+        }
+
+        const res = await api(`/auth/register/${path}`, { method:'POST', body: payload, auth:false });
+        saveToken(res.access_token);
+        location.hash = '#/';
+      }catch(err){
+        alert('Greška: ' + (err?.message || err));
+      }
+    });
+  }
+
+  bind('form-reg-korisnik','korisnik');
+  bind('form-reg-apoteka','apoteka');
+  bind('form-reg-staratelj','staratelj');
+  bind('form-reg-admin','admin');
+}
+
+async function renderProfilApoteka(){
+  requireRole('apoteka');
+  const data = await api('/profil/apoteka');
+
+  const boolPill = (v) => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+  const field = (label, value) => `
+    <div>
+      <dt class="text-sm text-gray-500">${label}</dt>
+      <dd class="mt-1 font-medium">${value ?? '<span class="text-gray-400">—</span>'}</dd>
+    </div>`;
+
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Profil apoteke</h2>
+    <div class="card">
+      <div class="flex items-start justify-between">
+        <div>
+          <h3 class="text-xl font-semibold">${escapeHtml(data.naziv)}</h3>
+          <p class="text-sm text-gray-500">Podaci o nalogu apoteke</p>
+        </div>
+      </div>
+      <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+        ${field('Naziv', escapeHtml(data.naziv))}
+        ${field('Mejl', data.mejl ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(data.mejl)}">${escapeHtml(data.mejl)}</a>` : null)}
+        ${field('Adresa', escapeHtml(data.adresa))}
+        ${data.dostupna !== undefined ? field('Dostupna', boolPill(!!data.dostupna)) : ''}
+      </dl>
+    </div>
+  `;
+}
+
+async function renderProfilKorisnik(){
+  requireRole('korisnik');
+  const d = await api('/profil/korisnik');
+
+  // probaj da povučeš staratelja(e)
+  let staratelji = [];
+  try {
+    const one = await api('/korisnik/staratelj');
+    if (one && typeof one === 'object' && !Array.isArray(one)) staratelji = [one];
+  } catch {}
+  if (!staratelji.length) {
+    try {
+      const list = await api('/korisnik/staratelji');
+      if (Array.isArray(list)) staratelji = list;
+    } catch {}
+  }
+
+  const field = (label, value) => `
+    <div>
+      <dt class="text-sm text-gray-500">${label}</dt>
+      <dd class="mt-1 font-medium">${value ?? '<span class="text-gray-400">—</span>'}</dd>
+    </div>`;
+  const fmtDate = (v) => v ? new Date(v).toISOString().slice(0,10) : null;
+  const boolPill = (v) => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Moj profil</h2>
+    <div class="card">
+      <h3 class="text-xl font-semibold">${escapeHtml(d.ime)} ${escapeHtml(d.prezime)}</h3>
+      <p class="text-sm text-gray-500">Lični podaci i kontakt</p>
+      <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+        ${field('ID', d.id != null ? String(d.id) : null)}
+        ${field('Ime', escapeHtml(d.ime))}
+        ${field('Prezime', escapeHtml(d.prezime))}
+        ${field('Datum rođenja', fmtDate(d.datum_rodjenja))}
+        ${field('Adresa', escapeHtml(d.adresa))}
+        ${field('Email', d.email ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(d.email)}">${escapeHtml(d.email)}</a>` : null)}
+        ${field('Telefon', d.broj_telefona ? `<a class="text-blue-600 hover:underline" href="tel:${escapeHtml(d.broj_telefona)}">${escapeHtml(d.broj_telefona)}</a>` : null)}
+      </dl>
+    </div>
+
+    <div class="card">
+      <h3 class="text-lg font-semibold mb-2">Staratelj</h3>
+      ${
+        staratelji.length
+          ? `
+            <div class="divide-y divide-gray-200">
+              ${staratelji.map(s => `
+                <div class="py-2">
+                  <div class="font-medium">${escapeHtml(s.ime || '')} ${escapeHtml(s.prezime || '')}
+                    ${s.id ? `<span class="text-xs text-gray-500">(#${String(s.id)})</span>` : ''}</div>
+                  <div class="text-sm text-gray-700 space-y-1">
+                    ${s.email ? `Email: <a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(s.email)}">${escapeHtml(s.email)}</a><br/>` : ''}
+                    ${s.broj_telefona ? `Telefon: <a class="text-blue-600 hover:underline" href="tel:${escapeHtml(s.broj_telefona)}">${escapeHtml(s.broj_telefona)}</a><br/>` : ''}
+                    ${
+                      s.dokument_starateljstva
+                        ? `Dokument: <a class="text-blue-600 hover:underline" href="${fileHref(s.dokument_starateljstva)}" target="_blank" download>preuzmi</a><br/>`
+                        : ''
+                    }
+                    ${s.odobrio_admin !== undefined ? `Odobren: ${boolPill(!!s.odobrio_admin)}` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `
+          : `<p class="text-gray-600">Nema dodeljenog staratelja.</p>`
+      }
+    </div>
+  `;
+}
+
+async function renderProfilStaratelj(){
+  requireRole('staratelj');
+  const d = await api('/profil/staratelj');
+  let korisnik = null;
+  try { korisnik = await api('/staratelj/korisnik'); } catch {}
+
+  const boolPill = (v) => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+  const field = (label, value) => `
+    <div>
+      <dt class="text-sm text-gray-500">${label}</dt>
+      <dd class="mt-1 font-medium">${value ?? '<span class="text-gray-400">—</span>'}</dd>
+    </div>`;
+
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Profil staratelja</h2>
+
+    <div class="card">
+      <h3 class="text-xl font-semibold">${escapeHtml(d.ime)} ${escapeHtml(d.prezime || '')}</h3>
+      <p class="text-sm text-gray-500">Podaci o staratelju</p>
+      <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+        ${field('Ime', escapeHtml(d.ime))}
+        ${field('Prezime', escapeHtml(d.prezime))}
+        ${field('Email', d.email ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(d.email)}">${escapeHtml(d.email)}</a>` : null)}
+        ${field('Telefon', d.broj_telefona ? `<a class="text-blue-600 hover:underline" href="tel:${escapeHtml(d.broj_telefona)}">${escapeHtml(d.broj_telefona)}</a>` : null)}
+        ${field('Dokument starateljstva',
+          d.dokument_starateljstva
+            ? `<a class="text-blue-600 hover:underline" href="${fileHref(d.dokument_starateljstva)}" target="_blank" download>preuzmi dokument</a>`
+            : null
+        )}
+        ${d.odobrio_admin !== undefined ? field('Odobrio admin', boolPill(!!d.odobrio_admin)) : ''}
+      </dl>
+    </div>
+
+    ${korisnik ? `
+    <div class="card">
+      <h3 class="text-lg font-semibold">Povezani korisnik</h3>
+      <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-3">
+        ${field('ID', String(korisnik.id))}
+        ${field('Ime', escapeHtml(korisnik.ime))}
+        ${field('Prezime', escapeHtml(korisnik.prezime || ''))}
+        ${field('Email', korisnik.email ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(korisnik.email)}">${escapeHtml(korisnik.email)}</a>` : null)}
+        ${field('Telefon', korisnik.broj_telefona ? `<a class="text-blue-600 hover:underline" href="tel:${escapeHtml(korisnik.broj_telefona)}">${escapeHtml(korisnik.broj_telefona)}</a>` : null)}
+        ${field('Adresa', escapeHtml(korisnik.adresa || ''))}
+      </dl>
+    </div>` : ''}
+  `;
+}
+
+async function renderProfilAdmin(){
+  requireRole('admin');
+  const field = (label, value) => `
+    <div>
+      <dt class="text-sm text-gray-500">${label}</dt>
+      <dd class="mt1 font-medium">${value ?? '<span class="text-gray-400">—</span>'}</dd>
+    </div>`;
+
+  try{
+    const d = await api('/profil/admin');
+    document.getElementById('app').innerHTML = `
+      <h2 class="text-2xl font-semibold mb-3">Admin profil</h2>
+      <div class="card">
+        <h3 class="text-xl font-semibold">${escapeHtml(d.ime)} ${escapeHtml(d.prezime || '')}</h3>
+        <p class="text-sm text-gray-500">Administratorski nalog</p>
+        <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+          ${field('Ime', escapeHtml(d.ime))}
+          ${field('Prezime', escapeHtml(d.prezime))}
+          ${field('Email', d.email ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(d.email)}">${escapeHtml(d.email)}</a>` : null)}
+        </dl>
+      </div>
+    `;
+  }catch{
+    const c = getClaims();
+    document.getElementById('app').innerHTML = `
+      <h2 class="text-2xl font-semibold mb-3">Admin profil</h2>
+      <div class="card">
+        <h3 class="text-xl font-semibold">${escapeHtml(c?.name || 'Administrator')}</h3>
+        <p class="text-sm text-gray-500">Podaci iz tokena</p>
+        <dl class="grid md:grid-cols-2 gap-x-8 gap-y-4 mt-4">
+          ${field('Email', c?.sub ? `<span>${escapeHtml(c.sub)}</span>` : null)}
+          ${field('Tip naloga', escapeHtml(c?.type || 'admin'))}
+        </dl>
+      </div>
+    `;
+  }
+}
+
+async function renderPregledLekova(){
+  const fmtCurrency = (n) => {
+    const x = Number(n);
+    return Number.isFinite(x) ? x.toLocaleString('sr-RS') : '—';
+  };
+  const boolPill = (v) => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Pregled lekova</h2>
+
+    <div class="card mb-4">
+      <form id="lekSearch" class="flex flex-wrap items-center gap-3">
+        <input name="q" placeholder="Pretraži po nazivu…" class="flex-1 min-w-[220px]" />
+        <label class="inline-flex items-center gap-2 whitespace-nowrap">
+          <input id="onlyAvail" type="checkbox" name="samo_dostupni" checked />
+          <span>Samo dostupni</span>
+        </label>
+        <button id="btnFilter" type="submit">Filtriraj</button>
+      </form>
+    </div>
+
+    <div class="card" id="lekoviOut">
+      <div class="animate-pulse text-gray-500">Učitavam…</div>
+    </div>
+  `;
+
+  const out = document.getElementById('lekoviOut');
+  const form = document.getElementById('lekSearch');
+  const inputQ = form.querySelector('input[name="q"]');
+  const onlyAvail = document.getElementById('onlyAvail');
+
+  const apoteke = await api('/pregledajApoteke', { auth:false });
+  const apotekaById = {};
+  (apoteke || []).forEach(a => { apotekaById[a.id] = a; });
+
+  async function load(q = '', samo_dostupni = true){
+    const lekoviRaw = await api('/pregledajLekove', { auth:false, query:{ q, samo_dostupni: samo_dostupni ? 'true' : 'false' }});
+    const lekovi = (samo_dostupni ? (lekoviRaw || []).filter(l => !!l.dostupnost) : (lekoviRaw || []));
+
+    if (!lekovi.length){
+      out.innerHTML = `<p class="text-gray-600">Nema lekova za zadate kriterijume.</p>`;
+      return;
+    }
+
+    out.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Naziv</th>
+            <th class="text-left px-3 py-2">Apoteka</th>
+            <th class="text-left px-3 py-2">Cena (RSD)</th>
+            <th class="text-left px-3 py-2">Dostupno</th>
+            <th class="text-left px-3 py-2">Recept</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lekovi.map(l => {
+            const ap = apotekaById[l.id_apoteke];
+            const apCell = ap
+              ? `<div class="font-medium">${escapeHtml(ap.naziv)}</div>
+                 <div class="text-xs text-gray-500">${escapeHtml(ap.adresa ?? '')}</div>`
+              : `<span class="text-gray-500">#${l.id_apoteke}</span>`;
+            return `
+              <tr class="border-b border-gray-200">
+                <td class="px-3 py-2">${escapeHtml(l.naziv)}</td>
+                <td class="px-3 py-2">${apCell}</td>
+                <td class="px-3 py-2">${fmtCurrency(l.cena)}</td>
+                <td class="px-3 py-2">${boolPill(!!l.dostupnost)}</td>
+                <td class="px-3 py-2">${boolPill(!!l.potreban_recept)}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  await load('', true);
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    await load(inputQ.value || '', onlyAvail.checked);
+  });
+  onlyAvail.addEventListener('change', async ()=>{
+    await load(inputQ.value || '', onlyAvail.checked);
+  });
+  let t = null;
+  inputQ.addEventListener('input', ()=>{
+    clearTimeout(t);
+    t = setTimeout(()=> load(inputQ.value || '', onlyAvail.checked), 300);
+  });
+}
+
+async function renderPregledApoteka(){
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Pregled apoteka</h2>
+
+    <div class="card mb-4">
+      <form id="apotekaSearch" class="grid md:grid-cols-3 gap-3">
+        <input name="q" placeholder="Pretraži po nazivu, mejlu ili adresi…" class="md:col-span-2" />
+        <button>Filtriraj</button>
+      </form>
+    </div>
+
+    <div class="card" id="apotekeOut">
+      <div class="animate-pulse text-gray-500">Učitavam…</div>
+    </div>
+  `;
+
+  const out = document.getElementById('apotekeOut');
+  const all = await api('/pregledajApoteke', { auth:false });
+
+  function render(list){
+    if (!list?.length){
+      out.innerHTML = `<p class="text-gray-600">Nema apoteka za zadate kriterijume.</p>`;
+      return;
+    }
+    out.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Naziv</th>
+            <th class="text-left px-3 py-2">Mejl</th>
+            <th class="text-left px-3 py-2">Adresa</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(a => `
+            <tr class="border-b border-gray-200">
+              <td class="px-3 py-2">
+                <div class="font-medium">${escapeHtml(a.naziv)}</div>
+              </td>
+              <td class="px-3 py-2">
+                ${a.mejl
+                  ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(a.mejl)}">${escapeHtml(a.mejl)}</a>`
+                  : '<span class="text-gray-500">—</span>'}
+              </td>
+              <td class="px-3 py-2">${escapeHtml(a.adresa ?? '—')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  render(all);
+  document.getElementById('apotekaSearch').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const q = (new FormData(e.target).get('q') || '').toString().trim().toLowerCase();
+    if (!q) { render(all); return; }
+    const filtered = all.filter(a => {
+      const s = `${a.naziv || ''} ${a.mejl || ''} ${a.adresa || ''}`.toLowerCase();
+      return s.includes(q);
+    });
+    render(filtered);
+  });
+}
+
+async function renderApotekaLekovi(){
+  requireRole('apoteka');
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-4">Moji lekovi (apoteka)</h2>
+    <div class="card" id="lekoviCard">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-gray-600">Pregled i upravljanje lekovima vaše apoteke</p>
+        <a href="#/apoteka/dodaj-lek" class="btn">Dodaj lek</a>
+      </div>
+      <div id="lekoviOut"><div class="animate-pulse text-gray-500">Učitavam…</div></div>
+    </div>
+  `;
+
+  const out = document.getElementById('lekoviOut');
+  const fmtCurrency = n => {
+    const x = Number(n);
+    return Number.isFinite(x) ? x.toLocaleString('sr-RS') : '—';
+  };
+  const boolPill = v => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+
+  async function load(){
+    const rows = await api('/apoteka/pregledajLekove');
+    if (!rows?.length){
+      out.innerHTML = `<p class="text-gray-600">Još uvek nemate nijedan lek.</p>`;
+      return;
+    }
+    out.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Naziv</th>
+            <th class="text-left px-3 py-2">Cena (RSD)</th>
+            <th class="text-left px-3 py-2">Dostupno</th>
+            <th class="text-left px-3 py-2">Recept</th>
+            <th class="text-right px-3 py-2">Akcija</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr class="border-b border-gray-200" data-row="${r.id}">
+              <td class="px-3 py-2 font-medium">${escapeHtml(r.naziv)}</td>
+              <td class="px-3 py-2">${fmtCurrency(r.cena)}</td>
+              <td class="px-3 py-2">${boolPill(!!r.dostupnost)}</td>
+              <td class="px-3 py-2">${boolPill(!!r.potreban_recept)}</td>
+              <td class="px-3 py-2 text-right">
+                <button class="px-3 py-1 rounded bg-rose-600 text-white hover:bg-rose-700"
+                        data-del="${r.id}">Obriši</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    out.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.getAttribute('data-del'));
+        if (!confirm(`Obrisati lek?`)) return;
+        try{
+          await api('/apoteka/obrisiLek', { method:'DELETE', body:{ lek_id:id }});
+          const tr = out.querySelector(`tr[data-row="${id}"]`);
+          if (tr) tr.remove();
+          if (!out.querySelector('tbody tr')) {
+            out.innerHTML = `<p class="text-gray-600">Još uvek nemate nijedan lek.</p>`;
+          }
+        }catch(err){
+          alert('Greška pri brisanju: ' + (err?.message || err));
+        }
+      });
+    });
+  }
+  await load();
+}
+
+async function renderApotekaPretplate(){
+  requireRole('apoteka');
+  if (!getToken()) throw new Error('Niste prijavljeni.');
+  const claims = getClaims();
+  if (claims.type !== 'apoteka') throw new Error('Zabranjen pristup (samo apoteka).');
+
+  const approveEndpoint = '/apoteka/odobriPretplatu';
+  const listEndpoint    = '/apoteka/pregledajPretplate';
+  const itemsEndpoint   = (id) => `/apoteka/pretplate/${id}/stavke`;
+  const deleteEndpoint  = '/apoteka/pretplate';
+
+  const escape = (s) => (typeof s === 'string' ? s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])) : String(s ?? ''));
+  const parseNum = (v) => (v == null ? null : Number(v));
+  const fmtCurrency = (n) => (typeof n === 'number' && !Number.isNaN(n)) ? n.toFixed(2) : '—';
+  const toDate = (s) => (s ? new Date(s) : null);
+  const fmtDate = (d) => d instanceof Date && !Number.isNaN(d) ? d.toISOString().slice(0,10) : '—';
+  function nextDelivery(danUMesecu, datumPocetkaISO){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const start = toDate(datumPocetkaISO) || today;
+    const base  = (start > today) ? start : today;
+    const y = base.getFullYear(), m = base.getMonth();
+    const day = parseInt(danUMesecu, 10) || 1;
+    const daysInMonth = (Y, M) => new Date(Y, M + 1, 0).getDate();
+    const setClamp = (Y, M, D) => new Date(Y, M, Math.min(D, daysInMonth(Y, M)));
+    let cand = setClamp(y, m, day);
+    if (cand < base) cand = setClamp(y, m + 1, day);
+    return cand;
+  }
+  const statusPill = (isActive) =>
+    isActive
+      ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">aktivna</span>'
+      : '<span class="px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">neaktivna</span>';
+
+  const root = document.getElementById('app');
+  root.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Pretplate (apoteka)</h2>
+    <div id="grid" class="grid md:grid-cols-2 gap-4"></div>
+  `;
+  const grid = document.getElementById('grid');
+
+  const pretplate = await api(listEndpoint);
+  if (!pretplate?.length){
+    grid.innerHTML = `<div class="card"><p class="text-gray-600">Nema pretplata koje sadrže vaše lekove.</p></div>`;
+    return;
+  }
+  grid.innerHTML = pretplate.map(p => `
+    <div class="card">
+      <div class="animate-pulse text-gray-500">Učitavam pretplatu #${escape(p.pretplata_id ?? p.id)}…</div>
+    </div>
+  `).join('');
+
+  const renderReceptCell = (s) => {
+    const id = s.recept || s.recept_dokument;
+    if (id) {
+      return `<a class="text-blue-600 hover:underline" href="${fileHref(id)}" target="_blank" download>preuzmi</a>`;
+    }
+    return 'ne';
+  };
+
+  function renderCard(p, stavke){
+    const pid   = p.pretplata_id ?? p.id;
+    const naziv = p.naziv ?? '—';
+    const dan   = parseNum(p.dan_u_mesecu_dostave);
+    const dpISO = p.datum_pocetka ?? p.datum_pokretanja ?? null;
+    const sledeci = nextDelivery(dan, dpISO);
+    const aktivna = !!p.aktivna;
+
+    const total = (stavke || []).reduce((acc, s) => {
+      const c = parseNum(s.cena);
+      return acc + (Number.isFinite(c) ? c : 0);
+    }, 0);
+
+    const countOveApoteke = p.stavki_ove_apoteke ?? p.broj_stavki_ove_apoteke ?? null;
+
+    const table = (stavke && stavke.length) ? `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden mt-2">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Lek</th>
+            <th class="text-left px-3 py-2">Cena</th>
+            <th class="text-left px-3 py-2">Recept</th>
+            <th class="text-left px-3 py-2">Odobreno</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stavke.map(s => `
+            <tr class="border-b border-gray-200">
+              <td class="px-3 py-2">${escape(s.naziv ?? s.lek_naziv ?? `#${s.id_leka}`)}</td>
+              <td class="px-3 py-2">${(typeof s.cena === 'number' ? s.cena.toFixed(2) : '—')}</td>
+              <td class="px-3 py-2">${renderReceptCell(s)}</td>
+              <td class="px-3 py-2">
+                ${s.odobreno_apoteka
+                  ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">da</span>'
+                  : '<span class="px-2 py-0.5 rounded-full bg-gray-100 border border-gray-300 text-gray-700 text-xs">ne</span>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    ` : `<p class="text-gray-600 mt-2">Nema stavki.</p>`;
+
+    const actions = aktivna ? '' : `<button class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700" data-approve="${pid}">Odobri</button>`;
+
+    return `
+      <div class="card" id="pretplata_${pid}" data-pid="${pid}" data-aktivna="${aktivna ? '1':'0'}">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-lg font-semibold">Pretplata #${pid} — "${escape(naziv)}"</h3>
+              <span class="status-pill">${statusPill(aktivna)}</span>
+            </div>
+            <div class="text-sm text-gray-600 mt-1">
+              ${countOveApoteke != null ? `<div><span class="font-medium">Stavki iz ove apoteke:</span> ${countOveApoteke}</div>` : ''}
+<!--              <div><span class="font-medium">Datum početka:</span> ${escape(dpISO ?? '—')}</div>-->
+              <div><span class="font-medium">Dan u mesecu:</span> ${dan ?? '—'}</div>
+              <div><span class="font-medium">Sledeća isporuka:</span> ${fmtDate(sledeci)}</div>
+              <div class="mt-1"><span class="font-medium">Ukupno:</span> ${fmtCurrency(total)}</div>
+            </div>
+          </div>
+          <div class="shrink-0 flex flex-col gap-2 action-slot">
+            ${actions}
+            <button class="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700" data-delete="${pid}">Obriši</button>
+          </div>
+        </div>
+        ${table}
+      </div>
+    `;
+  }
+
+  async function fetchStavke(pretplataId){
+    try { return await api(itemsEndpoint(pretplataId), { method:'GET' }); }
+    catch { try { return await api('/pretplate/stavke', { method:'GET', query:{ pretplata_id: pretplataId }}); }
+    catch { return await api(`/pretplate/${pretplataId}/stavke`, { method:'GET' }); } }
+  }
+
+  await Promise.all(pretplate.map(async (p, idx) => {
+    const pid = p.pretplata_id ?? p.id;
+    const stavke = await fetchStavke(pid);
+    grid.children[idx].outerHTML = renderCard(p, stavke);
+  }));
+
+  grid.addEventListener('click', async (e)=>{
+    const approveBtn = e.target.closest('button[data-approve]');
+    const deleteBtn  = e.target.closest('button[data-delete]');
+
+    function lockWidth(btn){ const w = getComputedStyle(btn).width; btn.style.width = w; return () => { btn.style.width = ''; }; }
+
+    if (approveBtn){
+      const id = Number(approveBtn.getAttribute('data-approve'));
+      const unlock = lockWidth(approveBtn);
+      const oldTxt = approveBtn.textContent;
+      approveBtn.disabled = true; approveBtn.textContent = '...';
+      try{
+        const res = await api(approveEndpoint, { method:'POST', body:{ pretplata_id:id }});
+        const isActive = !!res?.aktivna;
+        const card = document.getElementById(`pretplata_${id}`);
+        if (card){
+          const pill = card.querySelector('.status-pill');
+          pill.innerHTML = statusPill(isActive);
+          card.setAttribute('data-aktivna', isActive ? '1' : '0');
+          if (isActive){ approveBtn.remove(); }
+        }
+      }catch(err){ alert('Greška: ' + (err?.message || err)); }
+      finally { approveBtn.disabled = false; approveBtn.textContent = oldTxt; unlock(); }
+      return;
+    }
+
+    if (deleteBtn){
+      const id = Number(deleteBtn.getAttribute('data-delete'));
+      if (!confirm('Obrisati ovu pretplatu?')) return;
+      const unlock = (function(){ const u=lockWidth(deleteBtn); const t=deleteBtn.textContent; deleteBtn.disabled=true; deleteBtn.textContent='...'; return ()=>{ deleteBtn.disabled=false; deleteBtn.textContent=t; u(); }; })();
+      try{
+        await api(`${deleteEndpoint}/${id}`, { method: 'DELETE' });
+        const card = document.getElementById(`pretplata_${id}`);
+        if (card){ card.style.opacity = '0'; card.style.transition = 'opacity .2s ease'; setTimeout(()=> card.remove(), 200); }
+      }catch(err){ alert('Greška: ' + (err?.message || err)); }
+      finally { unlock(); }
+    }
+  });
+}
+
+async function renderDodajLek(){
+  requireRole('apoteka');
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Dodaj lek</h2>
+    <form id="f" class="card space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Naziv</label>
+        <input name="naziv" placeholder="npr. Brufen 400mg" required />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Cena (RSD)</label>
+        <input name="cena" type="number" step="0.01" min="0" placeholder="npr. 350" required />
+      </div>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <label class="flex items-center gap-2">
+          <input type="checkbox" name="potreban_recept" />
+          <span class="text-sm">Potreban recept</span>
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="checkbox" name="dostupnost" checked />
+          <span class="text-sm">Dostupnost</span>
+        </label>
+      </div>
+      <button class="btn w-full">Sačuvaj</button>
+    </form>
+  `;
+  document.getElementById('f').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = {
+      naziv: (fd.get('naziv') || '').toString().trim(),
+      cena: Number(fd.get('cena')),
+      potreban_recept: !!fd.get('potreban_recept'),
+      dostupnost: !!fd.get('dostupnost'),
+    };
+    if (!Number.isFinite(body.cena) || body.cena < 0) { alert('Unesi ispravnu cenu.'); return; }
+    try{
+      await api('/apoteka/dodajLek', { method:'POST', body });
+      alert('Lek dodat.');
+      location.hash = '#/apoteka/lekovi';
+    }catch(err){ alert('Greška: ' + (err?.message || err)); }
+  });
+}
+
+async function renderKorisnikPretplate(){
+  if (!getToken()) throw new Error('Niste prijavljeni.');
+  const claims = getClaims();
+  if (!['korisnik','staratelj'].includes(claims.type)) throw new Error('Zabranjen pristup.');
+  if (claims.type === 'staratelj') {
+    try {
+      const st = await api('/profil/staratelj');
+      if (!st?.odobrio_admin) {
+        document.getElementById('app').innerHTML = `
+          <h2 class="text-2xl font-semibold mb-3">Pretplate</h2>
+          <div class="card">
+            <p class="text-red-700 font-medium">Staratelj nije odobren.</p>
+            <p class="text-gray-600 text-sm">Obratite se administratoru radi odobrenja naloga.</p>
+          </div>`;
+        return;
+      }
+    } catch {
+      document.getElementById('app').innerHTML = `
+        <h2 class="text-2xl font-semibold mb-3">Pretplate</h2>
+        <div class="card"><p class="text-red-700 font-medium">Staratelj nije odobren.</p></div>`;
+      return;
+    }
+  }
+
+  const deletePath = (id) =>
+    (claims.type === 'staratelj')
+      ? `/staratelj/pretplate/${id}`
+      : `/korisnik/pretplate/${id}`;
+
+  const fmtCurrency = (n) => (typeof n === 'number' && !Number.isNaN(n)) ? n.toFixed(2) : '—';
+  const parseNum = (v) => (v == null ? null : Number(v));
+  const fmtDate = (d) => d instanceof Date && !Number.isNaN(d) ? d.toISOString().slice(0,10) : '—';
+  const toDate = (s) => (s ? new Date(s) : null);
+
+  function nextDelivery(danUMesecu, datumPocetkaISO){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const start = toDate(datumPocetkaISO) || today;
+    const base = (start > today) ? start : today;
+    const y = base.getFullYear(); const m = base.getMonth();
+    const day = parseInt(danUMesecu, 10) || 1;
+    const daysInMonth = (Y, M) => new Date(Y, M + 1, 0).getDate();
+    const setClamped = (Y, M, D) => new Date(Y, M, Math.min(D, daysInMonth(Y, M)));
+    let cand = setClamped(y, m, day);
+    if (cand < base) cand = setClamped(y, m + 1, day);
+    return cand;
+  }
+
+  // Lista pretplata
+  const pretplate = await api('/korisnik/pregledajPretplate');
+
+  // Mapiranja za apoteke i lekove (jednom povučeno)
+  const apoteke = await api('/pregledajApoteke', { auth:false }) || [];
+  const apotekaById = Object.fromEntries(apoteke.map(a => [a.id, a]));
+  const lekovi = await api('/pregledajLekove', { auth:false }) || [];
+  const lekById = Object.fromEntries(lekovi.map(l => [l.id, l]));
+
+  const root = document.getElementById('app');
+  root.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Pretplate</h2>
+    <div id="pretplateGrid" class="grid md:grid-cols-2 gap-4"></div>
+  `;
+  const grid = document.getElementById('pretplateGrid');
+
+  if (!pretplate?.length){
+    grid.innerHTML = `<div class="card"><p class="text-gray-600">Nemate pretplata.</p></div>`;
+    return;
+  }
+
+  async function fetchStavke(pretplataId){
+    try{ return await api('/pretplate/stavke', { method:'GET', query:{ pretplata_id: pretplataId }}); }
+    catch{ try{ return await api(`/pretplate/${pretplataId}/stavke`, { method:'GET' }); }
+    catch{ return []; } }
+  }
+
+  const statusPill = (aktivna) => aktivna
+    ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">aktivna</span>'
+    : '<span class="px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">neaktivna</span>';
+
+  const receptCell = (s) => {
+    const id = s.recept || s.recept_dokument;
+    if (!id) return 'ne';
+    return `<a class="text-blue-600 hover:underline" href="${fileHref(id)}" target="_blank" download>preuzmi</a>`;
+  };
+
+  // Izvuci info o apoteci iz stavki (ili preko mape lekova/apoteka)
+  function deriveApotekaInfo(stavke){
+    const ids = new Set();
+    const first = { naziv: '', adresa: '' };
+    for (const s of (stavke || [])) {
+      let apId = s.id_apoteke ?? null;
+      let naziv = '', adresa = '';
+      if (apId == null) {
+        const l = lekById[s.id_leka];
+        if (l) {
+          apId = l.id_apoteke;
+          naziv = l.apoteka_naziv || '';
+          adresa = l.apoteka_adresa || '';
+        }
+      }
+      if (apId != null) {
+        const ap = apotekaById[apId];
+        if (ap) { naziv = ap.naziv; adresa = ap.adresa || adresa; }
+        if (ids.size === 0) { first.naziv = naziv || (`Apoteka #${apId}`); first.adresa = adresa || ''; }
+        ids.add(apId);
+      }
+    }
+    if (ids.size === 0) return null;
+    if (ids.size === 1) return { type: 'one', ...first };
+    return { type: 'many', count: ids.size };
+  }
+
+  function renderCard(p, stavke){
+    const pid = p.pretplata_id ?? p.id;
+    const naziv = p.naziv ?? '—';
+    const aktivna = (p.aktivna === true);
+    const dan = parseNum(p.dan_u_mesecu_dostave);
+    const dp  = p.datum_pocetka ?? p.datum_pokretanja ?? null;
+    const sledeci = nextDelivery(dan, dp);
+    const total = (stavke || []).reduce((acc, s) => {
+      const c = parseNum(s.cena); return acc + (Number.isFinite(c) ? c : 0);
+    }, 0);
+
+    const apInfo = deriveApotekaInfo(stavke);
+    const apHtml = apInfo
+      ? (apInfo.type === 'one'
+          ? `<div><span class="font-medium">Apoteka:</span> ${escapeHtml(apInfo.naziv)}${apInfo.adresa ? `, <span class="text-gray-500">${escapeHtml(apInfo.adresa)}</span>` : ''}</div>`
+          : `<div><span class="font-medium">Apoteka:</span> Više apoteka (${apInfo.count})</div>`)
+      : '';
+
+    const table = (stavke && stavke.length) ? `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden mt-2">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Lek</th>
+            <th class="text-left px-3 py-2">Cena</th>
+            <th class="text-left px-3 py-2">Recept</th>
+            <th class="text-left px-3 py-2">Odobreno</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stavke.map(s => `
+            <tr class="border-b border-gray-200">
+              <td class="px-3 py-2">${escapeHtml(s.naziv ?? s.lek_naziv ?? `#${s.id_leka}`)}</td>
+              <td class="px-3 py-2">${(typeof s.cena === 'number' ? s.cena.toFixed(2) : '—')}</td>
+              <td class="px-3 py-2">${receptCell(s)}</td>
+              <td class="px-3 py-2">
+                ${s.odobreno_apoteka
+                  ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">da</span>'
+                  : '<span class="px-2 py-0.5 rounded-full bg-gray-100 border border-gray-300 text-gray-700 text-xs">ne</span>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    ` : `<p class="text-gray-600 mt-2">Nema stavki.</p>`;
+
+    const actions = `<button class="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700" data-delete="${pid}">Obriši</button>`;
+
+    return `
+      <div class="card" id="pretplata_${pid}">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-lg font-semibold">${escapeHtml(naziv)}</h3>
+              <span class="status-pill">${statusPill(aktivna)}</span>
+            </div>
+            <div class="text-sm text-gray-600 mt-1">
+              ${apHtml}
+<!--              <div><span class="font-medium">Datum početka:</span> ${escapeHtml(dp ?? '—')}</div>-->
+              <div><span class="font-medium">Dan u mesecu:</span> ${dan ?? '—'}</div>
+              <div><span class="font-medium">Sledeća isporuka:</span> ${fmtDate(sledeci)}</div>
+              <div class="mt-1"><span class="font-medium">Ukupno:</span> ${fmtCurrency(total)}</div>
+            </div>
+          </div>
+          <div class="shrink-0 action-slot">${actions}</div>
+        </div>
+        ${table}
+      </div>
+    `;
+  }
+
+  grid.innerHTML = pretplate.map(p => `
+    <div class="card">
+      <div class="animate-pulse text-gray-500">Učitavam pretplatu #${escapeHtml(String(p.pretplata_id ?? p.id))}…</div>
+    </div>
+  `).join('');
+
+  await Promise.all(pretplate.map(async (p, idx) => {
+    const pid = p.pretplata_id ?? p.id;
+    const stavke = await fetchStavke(pid);
+    grid.children[idx].outerHTML = renderCard(p, stavke);
+  }));
+
+  grid.addEventListener('click', async (e)=>{
+    const delBtn = e.target.closest('button[data-delete]');
+    if (!delBtn) return;
+    const id = Number(delBtn.getAttribute('data-delete'));
+    if (!Number.isFinite(id)) return;
+    if (!confirm('Da li sigurno želite da obrišete ovu pretplatu?')) return;
+    const w = getComputedStyle(delBtn).width;
+    delBtn.style.width = w;
+    const oldTxt = delBtn.textContent;
+    delBtn.textContent = '...';
+    delBtn.disabled = true;
+    try{
+      await api(deletePath(id), { method:'DELETE' });
+      const card = document.getElementById(`pretplata_${id}`);
+      if (card){ card.style.opacity = '0'; card.style.transition = 'opacity .2s ease'; setTimeout(()=> card.remove(), 200); }
+    }catch(err){
+      alert('Greška: ' + (err?.message || err));
+      delBtn.textContent = oldTxt; delBtn.disabled = false; delBtn.style.width = '';
+    }
+  });
+}
+
+
+
+async function renderDodajPretplatu(){
+  if (!getToken()) throw new Error('Niste prijavljeni.');
+  const claims = getClaims();
+  if (!['korisnik','staratelj'].includes(claims.type)) throw new Error('Zabranjen pristup.');
+  if (claims.type === 'staratelj') {
+    try {
+      const st = await api('/profil/staratelj');
+      if (!st?.odobrio_admin) {
+        document.getElementById('app').innerHTML = `
+          <h2 class="text-2xl font-semibold mb-3">Dodaj pretplatu</h2>
+          <div class="card">
+            <p class="text-red-700 font-medium">Staratelj nije odobren.</p>
+            <p class="text-gray-600 text-sm">Obratite se administratoru radi odobrenja naloga.</p>
+          </div>`;
+        return;
+      }
+    } catch {
+      document.getElementById('app').innerHTML = `
+        <h2 class="text-2xl font-semibold mb-3">Dodaj pretplatu</h2>
+        <div class="card"><p class="text-red-700 font-medium">Staratelj nije odobren.</p></div>`;
+      return;
+    }
+  }
+
+  const stavkeDraft = [];
+  let apotekaLock = null;
+
+  // helperi za datum isporuke
+  const toDate = (s) => (s ? new Date(s) : null);
+  const fmtDate = (d) => d instanceof Date && !Number.isNaN(d) ? d.toISOString().slice(0,10) : '—';
+  function nextDelivery(danUMesecu, datumPocetkaISO){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const start = toDate(datumPocetkaISO) || today;
+    const base = (start > today) ? start : today;
+    const y = base.getFullYear(); const m = base.getMonth();
+    const day = parseInt(danUMesecu, 10) || 1;
+    const daysInMonth = (Y, M) => new Date(Y, M + 1, 0).getDate();
+    const setClamped = (Y, M, D) => new Date(Y, M, Math.min(D, daysInMonth(Y, M)));
+    let cand = setClamped(y, m, day);
+    if (cand < base) cand = setClamped(y, m + 1, day);
+    return cand;
+  }
+
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">${claims.type==='staratelj'?'Dodaj pretplatu (kao staratelj)':'Dodaj pretplatu'}</h2>
+
+    <div class="grid md:grid-cols-2 gap-6 items-start">
+      <!-- LEVA KOLONA: forma (fiksna visina) + stavke ispod -->
+      <div class="space-y-4">
+        <form id="pretplataForm" class="card h-72 md:h-[40vh] overflow-auto">
+          <label class="block text-sm font-medium">Naziv</label>
+          <input name="naziv" placeholder="Naziv" required />
+          <label class="block text-sm font-medium">Dan u mesecu dostave</label>
+          <input name="dan_u_mesecu_dostave" type="number" min="1" max="28" value="10" required />
+<!--          <label class="block text-sm font-medium">Datum početka (opciono)</label>-->
+<!--          &lt;!&ndash; kalendarčić &ndash;&gt;-->
+<!--          <input name="datum_pocetka" type="date" />-->
+          <button>Sačuvaj pretplatu</button>
+          <p class="text-gray-600 text-sm mt-1">
+            Dodaj lekove desno. Za lekove koji zahtevaju recept obavezno priloži dokument (upload).
+          </p>
+          <div id="lockInfo" class="mt-3"></div>
+        </form>
+
+        <div class="card">
+          <h3 class="text-lg font-semibold mb-2">Stavke u pretplati</h3>
+          <div id="stavkeOut" class="space-y-2"></div>
+        </div>
+      </div>
+
+      <!-- DESNA KOLONA: pretraga/dodavanje lekova -->
+      <div class="space-y-4">
+        <div class="card">
+          <h3 class="text-lg font-semibold mb-2">Dodaj stavke (lekove)</h3>
+          <form id="searchForm" class="grid gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <input name="q" placeholder="Pretraži lekove po nazivu" class="flex-1" />
+              <label class="inline-flex items-center gap-2">
+                <input type="checkbox" name="samo_dostupni" checked />
+                Samo dostupni
+              </label>
+              <button>Pretraži</button>
+            </div>
+          </form>
+          <div id="searchOut" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const lockInfo = document.getElementById('lockInfo');
+  const searchOut = document.getElementById('searchOut');
+  const stavkeOut = document.getElementById('stavkeOut');
+
+  function renderLockInfo(stavka){
+    if (stavka == null){
+      lockInfo.innerHTML = `<div class="text-sm text-gray-600">Apoteka nije izabrana. Biće postavljena po prvoj dodatoj stavci.</div>`;
+    }else{
+      const any = stavka;
+      lockInfo.innerHTML = `
+        <div class="text-sm">
+          <span class="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800">
+            Apoteka: ${escapeHtml(any.apoteka_naziv)} — ${escapeHtml(any.apoteka_adresa)}
+          </span>
+        </div>`;
+    }
+  }
+
+  function renderStavke(){
+    if (!stavkeDraft.length){
+      apotekaLock = null;
+      renderLockInfo();
+      stavkeOut.innerHTML = `<p class="text-gray-600">Još nema stavki.</p>`;
+      return;
+    }
+    renderLockInfo(stavkeDraft[0]);
+    stavkeOut.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Lek</th>
+            <th class="text-left px-3 py-2">Apoteka</th>
+            <th class="text-left px-3 py-2 w-44">Recept</th>
+            <th class="text-right px-3 py-2 w-28"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stavkeDraft.map(it => {
+            const inputId = `recept_${it.id_leka}`;
+            return `
+              <tr class="border-b border-gray-200">
+                <td class="px-3 py-2">
+                  <div class="font-medium">${escapeHtml(it.naziv)}</div>
+                  <div class="text-xs text-gray-500">id=${it.id_leka}${it.cena!=null?` · cena: ${it.cena}`:''}</div>
+                </td>
+                <td class="px-3 py-2">
+                  <div>${escapeHtml(it.apoteka_naziv)}</div>
+                  <div class="text-xs text-gray-500">${escapeHtml(it.apoteka_adresa)}</div>
+                </td>
+                <td class="px-3 py-2 align-middle w-44">
+                  ${
+                    it.potreban_recept
+                      ? (it.recept_dokument
+                          ? `<a class="block max-w-44 truncate text-blue-600 hover:underline"
+                                 href="${fileHref(it.recept_dokument)}" target="_blank" download
+                                 title="${escapeHtml(it.recept_filename || 'recept.pdf')}">
+                               ${escapeHtml(it.recept_filename || 'recept.pdf')}
+                             </a>
+                             <button class="mt-1 px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                                     onclick="(function(id){
+                                       const s = window.__stavke.find(x=>x.id_leka===id);
+                                       if(s){ s.recept_dokument=null; s.recept_filename=''; window.renderStavke(); }
+                                     })(${it.id_leka}); return false;">
+                               Ukloni
+                             </button>`
+                          : `
+                            <input id="${inputId}" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden"
+                                   onchange="(async function(id, input){
+                                     const f = input.files[0]; if(!f) return;
+                                     try{
+                                       const up = await window.__upload(f);
+                                       const s = window.__stavke.find(x=>x.id_leka===id);
+                                       if(s){ s.recept_dokument = up.id; s.recept_filename = f.name; window.renderStavke(); }
+                                     }catch(err){ alert('Greška pri uploadu: '+(err?.message||err)); input.value=''; }
+                                   })(${it.id_leka}, this)" />
+                            <label for="${inputId}"
+                                   class="inline-flex items-center justify-center px-2 py-1 rounded-md bg-blue-600 text-white text-xs font-medium cursor-pointer hover:bg-blue-700">
+                              Dodaj recept
+                            </label>
+                            <span class="ml-2 text-xs text-gray-500">PDF/JPG/PNG</span>
+                          `
+                        )
+                      : '<span class="text-gray-500">nije potreban</span>'
+                  }
+                </td>
+                <td class="px-3 py-2 text-right">
+                  <button class="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                          onclick="(function(id){const i=window.__stavke.findIndex(x=>x.id_leka===id); if(i>=0){window.__stavke.splice(i,1); window.renderStavke();}})(${it.id_leka}); return false;">
+                    Ukloni stavku
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+  window.__stavke = stavkeDraft;
+  window.__upload = (file) => apiUpload('/files/upload', file, {auth:true});
+  window.renderStavke = renderStavke;
+
+  async function doSearch(q, samo_dostupni){
+    const data = await api('/pregledajLekove', {auth:false, query:{q, samo_dostupni}});
+    if (!data?.length){
+      searchOut.innerHTML = `<p class="text-gray-600">Nema rezultata.</p>`;
+      return;
+    }
+    searchOut.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50"><tr>
+          <th class="text-left px-3 py-2">ID</th>
+          <th class="text-left px-3 py-2">Naziv</th>
+          <th class="text-left px-3 py-2">Cena</th>
+          <th class="text-left px-3 py-2">Apoteka</th>
+          <th class="text-left px-3 py-2">Recept</th>
+          <th class="text-left px-3 py-2"></th>
+        </tr></thead>
+        <tbody>
+          ${data.map(r => `
+            <tr class="border-b border-gray-200">
+              <td class="px-3 py-2">${r.id}</td>
+              <td class="px-3 py-2">${escapeHtml(r.naziv)}</td>
+              <td class="px-3 py-2">${r.cena ?? '—'}</td>
+              <td class="px-3 py-2">
+                <div>${escapeHtml(r.apoteka_naziv ?? '')}</div>
+                <div class="text-xs text-gray-500">${escapeHtml(r.apoteka_adresa ?? '')}</div>
+              </td>
+              <td class="px-3 py-2">${r.potreban_recept ? 'da' : 'ne'}</td>
+              <td class="px-3 py-2">
+                <button class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                        onclick='(function(obj){
+                          if (window.__apotekaLock != null && window.__apotekaLock !== obj.id_apoteke){
+                            alert("Sve stavke u pretplati moraju biti iz iste apoteke."); return;
+                          }
+                          if(window.__stavke.some(s=>s.id_leka===obj.id)){alert("Ovaj lek je već dodat."); return;}
+                          window.__apotekaLock = (window.__apotekaLock ?? obj.id_apoteke);
+                          window.__stavke.push({
+                            id_leka: obj.id,
+                            naziv: obj.naziv,
+                            cena: obj.cena,
+                            potreban_recept: !!obj.potreban_recept,
+                            recept_dokument: null,
+                            recept_filename: "",
+                            id_apoteke: obj.id_apoteke,
+                            apoteka_naziv: obj.apoteka_naziv || "",
+                            apoteka_adresa: obj.apoteka_adresa || ""
+                          });
+                          window.renderStavke();
+                        })(${JSON.stringify({
+                          id:r.id, naziv:r.naziv, cena:r.cena,
+                          potreban_recept:r.potreban_recept,
+                          id_apoteke:r.id_apoteke,
+                          apoteka_naziv:r.apoteka_naziv, apoteka_adresa:r.apoteka_adresa
+                        }).replace(/"/g,"&quot;")}); return false;'>
+                  Dodaj
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+  window.__apotekaLock = apotekaLock;
+
+  document.getElementById('searchForm').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    doSearch(fd.get('q')||'', fd.get('samo_dostupni')==='on');
+  });
+
+  await doSearch('', true);
+  renderStavke();
+
+  document.getElementById('pretplataForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if (!stavkeDraft.length){ alert('Dodajte bar jedan lek.'); return; }
+
+    const missing = stavkeDraft.filter(s => s.potreban_recept && !s.recept_dokument).map(s => s.naziv);
+    if (missing.length){ alert('Nedostaje recept za: ' + missing.join(', ')); return; }
+
+    const btn = e.target.querySelector('button'); btn.disabled = true;
+    const fd = new FormData(e.target);
+    const bodyPretplata = {
+      naziv: fd.get('naziv'),
+      dan_u_mesecu_dostave: Number(fd.get('dan_u_mesecu_dostave')),
+      datum_pocetka: fd.get('datum_pocetka') || null, // YYYY-MM-DD (ili null)
+    };
+
+    try{
+      const created = await api('/pretplate', {method:'POST', body: bodyPretplata});
+      const pretplata_id = created.id ?? created.pretplata_id;
+      if (!pretplata_id) throw new Error('Nije vraćen ID pretplate');
+
+      for (const s of stavkeDraft){
+        const payload = {
+          id_pretplate: pretplata_id,
+          id_leka: s.id_leka,
+          recept_dokument: s.potreban_recept ? (s.recept_dokument || null) : null,
+        };
+        await api('/pretplate/stavke', {method:'POST', body: payload});
+      }
+
+      // 📣 obaveštenje + datum prve isporuke
+      const firstDelivery = nextDelivery(bodyPretplata.dan_u_mesecu_dostave, bodyPretplata.datum_pocetka);
+      alert('Pretplata sa stavkama je sačuvana.\nPrva isporuka: ' + fmtDate(firstDelivery));
+      location.hash = '#/korisnik/pretplate';
+    }catch(err){
+      alert('Greška: ' + (err?.message || err));
+    }finally{
+      btn.disabled = false;
+    }
+  });
+}
+
+
+
+async function renderOtkaziPretplatu(){ location.hash = '#/korisnik/pretplate'; }
+
+async function renderAdminOdobriNalog(){
+  requireRole('admin');
+
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Admin – odobravanje naloga (staratelj)</h2>
+    <div class="card space-y-4">
+      <div id="listOut"><div class="animate-pulse text-gray-500">Učitavam…</div></div>
+    </div>
+  `;
+
+  const listOut = document.getElementById('listOut');
+
+  const boolPill = v => v
+    ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs">✅ da</span>'
+    : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs">✖️ ne</span>';
+
+  async function fetchPending(){
+    return await api('/admin/staratelji/neodobreni');
+  }
+
+  async function load(){
+    const rows = await fetchPending();
+    if (!rows?.length){
+      listOut.innerHTML = `<p class="text-gray-600">Nema staratelja koji čekaju odobrenje.</p>`;
+      return;
+    }
+    listOut.innerHTML = `
+      <table class="min-w-full border border-gray-200 rounded-lg overflow-hidden">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left px-3 py-2">Ime i prezime</th>
+            <th class="text-left px-3 py-2">Email</th>
+            <th class="text-left px-3 py-2">Telefon</th>
+            <th class="text-left px-3 py-2">ID korisnika</th>
+            <th class="text-left px-3 py-2">Dokument</th>
+            <th class="text-left px-3 py-2">Odobren</th>
+            <th class="text-right px-3 py-2">Akcija</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr class="border-b border-gray-200" data-row="${r.id}">
+              <td class="px-3 py-2 font-medium">${escapeHtml(r.ime)} ${escapeHtml(r.prezime || '')}</td>
+              <td class="px-3 py-2">
+                ${r.email ? `<a class="text-blue-600 hover:underline" href="mailto:${escapeHtml(r.email)}">${escapeHtml(r.email)}</a>` : '—'}
+              </td>
+              <td class="px-3 py-2">
+                ${r.broj_telefona ? `<a class="text-blue-600 hover:underline" href="tel:${escapeHtml(r.broj_telefona)}">${escapeHtml(r.broj_telefona)}</a>` : '—'}
+              </td>
+              <td class="px-3 py-2">${r.id_korisnika ?? '—'}</td>
+              <td class="px-3 py-2">
+                ${r.dokument_starateljstva
+                  ? `<a class="text-blue-600 hover:underline" href="${fileHref(r.dokument_starateljstva)}" target="_blank" download>preuzmi</a>`
+                  : '—'}
+              </td>
+              <td class="px-3 py-2">${boolPill(!!r.odobrio_admin)}</td>
+              <td class="px-3 py-2 text-right">
+                <button class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700" data-approve="${r.id}">
+                  Odobri
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    // delegacija za klik na "Odobri"
+    listOut.querySelectorAll('[data-approve]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.getAttribute('data-approve'));
+        const old = btn.textContent;
+        btn.disabled = true; btn.textContent = '...';
+        try{
+          await api('/admin/odobriNalog', { method:'POST', body:{ staratelj_id:id }});
+          const tr = btn.closest('tr'); if (tr) tr.remove();
+          if (!listOut.querySelector('tbody tr')){
+            listOut.innerHTML = `<p class="text-gray-600">Nema staratelja koji čekaju odobrenje.</p>`;
+          }
+        }catch(err){
+          alert('Greška pri odobravanju: ' + (err?.message || err));
+          btn.disabled = false; btn.textContent = old;
+        }
+      });
+    });
+  }
+
+  await load();
+}
+
+
+async function renderObrisiNalog(){
+  if (!getToken()) throw new Error('Niste prijavljeni.');
+  const claims = getClaims();
+  let endpoint = null;
+  if (claims.type === 'korisnik') endpoint = '/korisnik/obrisiNalog';
+  else if (claims.type === 'apoteka') endpoint = '/apoteka/obrisiNalog';
+  else if (claims.type === 'admin') endpoint = '/admin/obrisiNalog';
+  else if (claims.type === 'staratelj') endpoint = '/staratelj/obrisiNalog';
+  document.getElementById('app').innerHTML = `
+    <h2 class="text-2xl font-semibold mb-3">Brisanje naloga</h2>
+    <div class="card">
+      <p class="text-red-700"><strong>PAŽNJA:</strong> ovo će obrisati tvoj nalog${claims.type==='korisnik' ? ' i povezane podatke (pretplate, staratelje)' : ''}.</p>
+      <button id="btn-del" class="bg-red-600 hover:bg-red-700 mt-3">Da, obriši nalog</button>
+    </div>
+  `;
+  document.getElementById('btn-del').addEventListener('click', async ()=>{
+    if (!confirm('Zaista obrisati nalog?')) return;
+    try{
+      await api(endpoint, {method:'DELETE'});
+      alert('Nalog obrisan.');
+      logout();
+      location.hash = '#/';
+    }catch(err){ alert('Greška: '+err.message); }
+  });
+}
+
+async function renderObrisiLek(){ location.hash = '#/apoteka/lekovi'; }
+async function renderNotFound(){ document.getElementById('app').innerHTML = `<h2 class="text-2xl font-semibold">Stranica nije nađena</h2>`; }
+
+/* ------------------------------------------------------------------ *
+ *  UI ENHANCE
+ * ------------------------------------------------------------------ */
+function enhanceUI() {
+  const root = document.getElementById('app');
+  if (!root) return;
+
+  root.querySelectorAll('.card').forEach(el =>
+    el.classList.add('bg-white','rounded-xl','shadow','border','border-gray-200','p-4','mb-4')
+  );
+
+  root.querySelectorAll('form').forEach(el => {
+    if (el.classList.contains('flex') || el.dataset.keepLayout === '1') {
+      // ostavi njihov layout (flex)
+    } else {
+      el.classList.add('grid','gap-3','max-w-lg');
+    }
+  });
+
+  root.querySelectorAll('input,select,textarea').forEach(el =>
+    el.classList.add('block','w-full','rounded-md','border','border-gray-300','px-3','py-2',
+                     'focus:outline-none','focus:ring','focus:ring-blue-500','focus:border-blue-500')
+  );
+
+  root.querySelectorAll('button,.btn').forEach(el =>
+    el.classList.add('inline-flex','items-center','justify-center','px-3','py-2',
+                     'rounded-md','bg-blue-600','text-white','font-medium','hover:bg-blue-700')
+  );
+
+  root.querySelectorAll('.danger').forEach(el => {
+    el.classList.remove('bg-blue-600','hover:bg-blue-700');
+    el.classList.add('bg-red-600','hover:bg-red-700','text-white','border-0');
+  });
+
+  root.querySelectorAll('thead').forEach(el => el.classList.add('bg-gray-50'));
+  root.querySelectorAll('th,td').forEach(el =>
+    el.classList.add('px-3','py-2','border-b','border-gray-200','text-left','align-top')
+  );
+}
+</script>
+</body>
+</html>

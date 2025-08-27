@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mediplan}
+      POSTGRES_USER: ${POSTGRES_USER:-mediplan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mediplan}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mediplan} -d ${POSTGRES_DB:-mediplan}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # NAPOMENA: koristimo servisni DNS naziv "db"
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-mediplan}:${POSTGRES_PASSWORD:-mediplan}@db:5432/${POSTGRES_DB:-mediplan}
+
+      SECRET_KEY: ${SECRET_KEY:-devsecret123}
+      # tvoja postojeća podešavanja
+      ENABLE_UPDATED_AT_TRIGGERS: ${ENABLE_UPDATED_AT_TRIGGERS:-true}
+      # gde se čuvaju uploadovi u containteru:
+      UPLOAD_DIR: /app/uploads
+      # seeding (prvi put: RUN_SEED=1 i WIPE_DB=1)
+      RUN_SEED: ${RUN_SEED:-0}
+      WIPE_DB: ${WIPE_DB:-0}
+    ports:
+      - "8000:8000"
+    volumes:
+      # da bi upload fajlovi bili trajni
+      - uploads_data:/app/uploads
+      # opcionalno: hot-reload koda (samo u dev)
+      # - ./app:/app/app:ro
+      # - ./frontend:/app/frontend:ro
+
+volumes:
+  db_data:
+  uploads_data:
