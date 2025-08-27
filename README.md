@@ -22,3 +22,5 @@ Korisnik:    petar@example.com / user123
 Korisnik:    ana@example.com / user123
 Korisnik:    marko@example.com / user123
 ```
+
+Aplikacija se nalazi na adresi http://localhost:8000
