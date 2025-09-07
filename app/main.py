@@ -7,7 +7,7 @@ from starlette.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.init_db import init_db
 from app.api.routers import (
-    korisnici, administratori, apoteke, staratelji, lekovi, pretplate, auth, profile, public, apoteka_portal, korisnik_portal, apoteka_manage, admin_portal, staratelj_portal, files
+    korisnici, administratori, apoteke, obavestenja, staratelji, lekovi, pretplate, auth, profile, public, apoteka_portal, korisnik_portal, apoteka_manage, admin_portal, staratelj_portal, files
 )
 
 from app.core.config import settings
@@ -54,6 +54,7 @@ app.include_router(apoteka_manage.router)
 app.include_router(admin_portal.router)
 app.include_router(staratelj_portal.router)
 app.include_router(files.router)
+app.include_router(obavestenja.router)
 
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")

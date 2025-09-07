@@ -5,3 +5,4 @@ from .staratelj import Staratelj
 from .lek import Lek
 from .pretplata import Pretplata
 from .pretplata_lek import PretplataLek
+from .obavestenje import Obavestenje, ObavestenjeAdmin, ObavestenjeApoteka, ObavestenjeKorisnik

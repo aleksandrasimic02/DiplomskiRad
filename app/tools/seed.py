@@ -13,6 +13,8 @@ from app.models.korisnik import Korisnik
 from app.models.admin import Administrator
 from app.models.apoteka import Apoteka
 from app.models.lek import Lek
+from app.models.obavestenje import Obavestenje
+
 
 
 # --- HARD WIPE: obori ceo public schema i vrati ga čistog ---
@@ -1193,6 +1195,50 @@ def _seed_lekovi_for_apoteka3(db: Session, ap: Apoteka):
 
 def create_sample_data(db: Session) -> dict:
     out: dict = {}
+
+    # === Obavestenja ===
+    obavestenje1 = Obavestenje(
+        naziv="Kreirana nova pretplata",
+        opis="Proverite svoju sekciju sa pretplatama"
+    )
+    db.add(obavestenje1)
+
+    obavestenje2 = Obavestenje(
+        naziv="Odobrena pretplata",
+        opis="Proverite svoju sekciju sa pretplatama"
+    )
+    db.add(obavestenje2)
+
+    obavestenje3 = Obavestenje(
+        naziv="Pretplata ceka aktivaciju",
+        opis="Proverite svoju sekciju sa pretplatama"
+    )
+    db.add(obavestenje3)
+
+    obavestenje4 = Obavestenje(
+        naziv="Staratelj odobren",
+        opis=""
+    )
+    db.add(obavestenje4)
+
+    obavestenje5 = Obavestenje(
+        naziv="Registrovan novi staratelj",
+        opis=""
+    )
+    db.add(obavestenje5)
+
+    obavestenje6 = Obavestenje(
+        naziv="Staratelj uklonjen",
+        opis="Proverite svoj profil"
+    )
+    db.add(obavestenje6)
+
+    obavestenje7 = Obavestenje(
+        naziv="Pretplata otkazana",
+        opis="Proverite svoju sekciju sa pretplatama"
+    )
+    db.add(obavestenje7)
+
 
     # === Administrator ===
     admin = Administrator(

@@ -1,4 +1,5 @@
 # app/crud/pretplata.py
+from app.crud.obavestenje import add_apoteka, add_korisnik
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import date
@@ -8,7 +9,7 @@ from app.models.lek import Lek
 from app.schemas.pretplata import PretplataCreate
 from app.schemas.pretplata_lek import PretplataLekCreate
 
-def _recompute_aktivna(db: Session, pretplata_id: int) -> Pretplata:
+def _recompute_aktivna(db: Session, pretplata_id: int, id_apoteke: int) -> Pretplata:
     """Aktivna je ako nema neodobrenih recept-stavki."""
     pending = (
         db.query(func.count())
@@ -23,7 +24,14 @@ def _recompute_aktivna(db: Session, pretplata_id: int) -> Pretplata:
     )
     p = db.get(Pretplata, pretplata_id)
     p.aktivna = (pending == 0)
+
+
     db.flush()
+
+
+    if p.aktivna == False:
+        add_apoteka(db=db, obavestenje_id=3, apoteka_id=id_apoteke)
+
     return p
 
 def create_pretplata(db: Session, data: PretplataCreate, owner_id: int) -> Pretplata:
@@ -38,6 +46,9 @@ def create_pretplata(db: Session, data: PretplataCreate, owner_id: int) -> Pretp
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    
+    add_korisnik(db=db, obavestenje_id=1, korisnik_id=owner_id)
+
     return obj
 
 def add_lek(db: Session, data: PretplataLekCreate, owner_id: int) -> PretplataLek:
@@ -75,7 +86,9 @@ def add_lek(db: Session, data: PretplataLekCreate, owner_id: int) -> PretplataLe
     obj = PretplataLek(**payload)
     db.add(obj)
     db.flush()                    # dobij obj.id, i imamo obj.id_pretplate
-    _recompute_aktivna(db, p.id)  # ako je dodata recept-stavka → aktivna=False
+    _recompute_aktivna(db, p.id, lek.id_apoteke)  # ako je dodata recept-stavka → aktivna=False
     db.commit()
     db.refresh(obj)
+    add_apoteka(db=db, obavestenje_id=1, apoteka_id=lek.id_apoteke)
+
     return obj

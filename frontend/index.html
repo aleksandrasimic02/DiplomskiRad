@@ -108,6 +108,7 @@ function renderNav(){
   const el = document.getElementById('nav-auth');
   const claims = getClaims();
   const logged = !!getToken();
+
   if (!logged){
     el.innerHTML = `
       <a href="#/login" class="px-3 py-1 rounded-md border border-gray-300 hover:bg-gray-100">Login</a>
@@ -115,9 +116,11 @@ function renderNav(){
     `;
     return;
   }
+
   const role = claims.type;
   const pill = r => `<span class="px-2 py-0.5 rounded-full text-xs border border-gray-300 bg-gray-100">${r}</span>`;
   const links = [];
+
   if (role === 'korisnik'){
     links.push('<a href="#/profil/korisnik" class="px-2 py-1 rounded hover:bg-gray-100">Moj profil</a>');
     links.push('<a href="#/korisnik/pretplate" class="px-2 py-1 rounded hover:bg-gray-100">Moje pretplate</a>');
@@ -135,10 +138,258 @@ function renderNav(){
     links.push('<a href="#/profil/admin" class="px-2 py-1 rounded hover:bg-gray-100">Admin profil</a>');
     links.push('<a href="#/admin/odobri-nalog" class="px-2 py-1 rounded hover:bg-gray-100">Odobri nalog</a>');
   }
+
+  // 🔔 obaveštenja
+  const notifHtml = notifDropdownHTML();
+
   links.push('<a href="#/obrisi-nalog" class="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700">Obriši nalog</a>');
   links.push('<a href="#/logout" class="px-2 py-1 rounded border border-gray-300 hover:bg-gray-100" onclick="logout();return false;">Logout</a>');
-  el.innerHTML = `${pill(role)} ` + links.join(' ');
+
+  el.innerHTML = `${pill(role)} ${notifHtml} ` + links.join(' ');
+
+  // montiranje handlera i inicijalno učitavanje značkice
+  mountNotifHandlers();
+  loadNotifications(false).catch(()=>{});
 }
+
+/* ============================
+   NOTIFIKACIJE (navbar dropdown)
+   ============================ */
+
+let __notif = {
+  items: [],         // {id/link_id, naziv, opis, procitano}
+  unread: 0,
+  open: false,
+  lastLoad: 0,
+  loading: false,
+  korisnikIdForGuardian: null, // ako je uloga staratelj
+};
+
+function notifDropdownHTML(){
+  return `
+  <div class="relative inline-block text-left" id="notif-root">
+    <button id="notif-btn" class="relative inline-flex items-center justify-center px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-100">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M14.25 18.5h-4.5m10.5-2.25v-5.25a6.75 6.75 0 10-13.5 0v5.25l-1.5 1.5h16.5l-1.5-1.5zM9.75 18.5a2.25 2.25 0 004.5 0"/>
+      </svg>
+      <span id="notif-badge" class="absolute -top-1 -right-1 inline-flex items-center justify-center rounded-full min-w-[18px] h-[18px] text-[11px] px-1 bg-red-600 text-white hidden">0</span>
+    </button>
+
+    <div id="notif-panel" class="hidden absolute right-0 mt-2 w-96 max-w-[90vw] origin-top-right rounded-xl border border-gray-200 bg-white shadow-lg">
+      <div class="px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+        <span class="font-semibold">Obaveštenja</span>
+        <button id="notif-markall" class="text-xs px-2 py-1 rounded-md border border-gray-300 hover:bg-gray-100">Označi sve kao pročitano</button>
+      </div>
+      <div id="notif-body" class="max-h-96 overflow-auto divide-y divide-gray-100">
+        <div id="notif-loading" class="p-4 text-gray-500">Učitavam…</div>
+        <div id="notif-empty" class="p-4 text-gray-500 hidden">Nema obaveštenja.</div>
+        <div id="notif-list"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function mountNotifHandlers(){
+  const root = document.getElementById('notif-root');
+  if (!root) return;
+  const btn = root.querySelector('#notif-btn');
+  const panel = root.querySelector('#notif-panel');
+  const markAll = root.querySelector('#notif-markall');
+
+  function closePanel(){
+    panel.classList.add('hidden');
+    __notif.open = false;
+  }
+  function openPanel(){
+    panel.classList.remove('hidden');
+    __notif.open = true;
+  }
+
+  btn.onclick = async (e) => {
+    e.preventDefault();
+    if (__notif.open){ closePanel(); return; }
+    openPanel();
+    // lazy load na otvaranje (cache 30s)
+    const now = Date.now();
+    const stale = now - __notif.lastLoad > 30_000;
+    if (!__notif.items.length || stale){
+      await loadNotifications(true).catch(()=>{});
+    } else {
+      renderNotifUI();
+    }
+  };
+
+  markAll.onclick = async () => {
+    if (!__notif.items.length) return;
+    const promises = __notif.items
+      .filter(x => !x.procitano)
+      .map(x => toggleNotification(x._type, x._linkId, true, __notif.korisnikIdForGuardian));
+    await Promise.allSettled(promises);
+    // Forsiraj refresh
+    await loadNotifications(true).catch(()=>{});
+  };
+
+  // zatvaranje na klik van panela
+  document.addEventListener('click', (ev) => {
+    if (!__notif.open) return;
+    if (!root.contains(ev.target)){ closePanel(); }
+  }, { capture: true });
+}
+
+async function loadNotifications(force){
+  if (__notif.loading) return;
+  __notif.loading = true;
+  try{
+    // Odredi koji endpoint da pogodimo po ulozi
+    const claims = getClaims();
+    const role = claims?.type;
+    let list = [];
+    let typeForToggle = null;
+    let korisnikIdForGuardian = null;
+
+    if (role === 'korisnik'){
+      list = await api('/obavestenja/korisnik', { method:'GET' });
+      typeForToggle = 'korisnik';
+    } else if (role === 'apoteka'){
+      list = await api('/obavestenja/apoteka', { method:'GET' });
+      typeForToggle = 'apoteka';
+    } else if (role === 'admin'){
+      list = await api('/obavestenja/admin', { method:'GET' });
+      typeForToggle = 'admin';
+    } else if (role === 'staratelj'){
+      // za staratelja prikazujemo obaveštenja njegovog korisnika
+      try{
+        const k = await api('/staratelj/korisnik', { method:'GET' });
+        if (k?.id != null){
+          korisnikIdForGuardian = k.id;
+          list = await api('/obavestenja/korisnik/by-staratelj', { method:'GET', query:{ korisnik_id: String(k.id) } });
+          typeForToggle = 'korisnik'; // toggle radi nad korisnikovim vezama
+        } else {
+          list = [];
+        }
+      }catch{
+        list = [];
+      }
+    }
+
+    // Normalizacija zapisa
+    const norm = (list || []).map(n => {
+      const linkId = n.link_id ?? n.id ?? n.veza_id ?? n.m2m_id;
+      const naziv = n.naziv ?? n.title ?? '';
+      const opis = n.opis ?? n.description ?? '';
+      const procitano = !!(n.procitano ?? n.read ?? n.is_read);
+      return {
+        _linkId: linkId, _type: typeForToggle,
+        naziv, opis, procitano
+      };
+    });
+
+    __notif.items = norm;
+    __notif.unread = norm.filter(x => !x.procitano).length;
+    __notif.lastLoad = Date.now();
+    __notif.korisnikIdForGuardian = korisnikIdForGuardian ?? null;
+
+    renderNotifUI();
+  } finally {
+    __notif.loading = false;
+  }
+}
+
+function renderNotifUI(){
+  const root = document.getElementById('notif-root');
+  if (!root) return;
+
+  // badge
+  const badge = root.querySelector('#notif-badge');
+  if (__notif.unread > 0){
+    badge.textContent = String(__notif.unread);
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  // panel list
+  const loading = root.querySelector('#notif-loading');
+  const empty = root.querySelector('#notif-empty');
+  const listEl = root.querySelector('#notif-list');
+
+  loading.classList.add('hidden');
+  listEl.innerHTML = '';
+
+  if (!__notif.items.length){
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  listEl.innerHTML = __notif.items.map(item => `
+    <div class="px-3 py-2 flex items-start gap-3 ${item.procitano ? 'bg-white' : 'bg-blue-50'}">
+      <div class="mt-0.5">
+        ${item.procitano
+          ? '✅'
+          : '🔵'}
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium truncate">${escapeHtml(item.naziv || 'Obaveštenje')}</div>
+        <div class="text-sm text-gray-600 whitespace-pre-wrap break-words">${escapeHtml(item.opis || '')}</div>
+      </div>
+      <div class="shrink-0">
+        <button
+          class="px-2 py-1 rounded-md border border-gray-300 hover:bg-gray-100 text-xs"
+          data-notif-toggle="${item._linkId}"
+          data-notif-type="${item._type}"
+          data-notif-next="${item.procitano ? '0' : '1'}"
+        >
+          ${item.procitano ? 'Označi nepročitano' : 'Označi pročitano'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // delegiraj klikove na toggle
+  listEl.querySelectorAll('[data-notif-toggle]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const linkId = btn.getAttribute('data-notif-toggle');
+      const type = btn.getAttribute('data-notif-type');
+      const next = btn.getAttribute('data-notif-next') === '1';
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = '...';
+      try{
+        await toggleNotification(type, linkId, next, __notif.korisnikIdForGuardian);
+        await loadNotifications(true);
+      }catch(err){
+        alert('Greška: ' + (err?.message || err));
+      }finally{
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    });
+  });
+}
+
+async function toggleNotification(type, linkId, procitano, korisnikIdForGuardian){
+  // Podržani endpointi (prilagodi BE po potrebi):
+  //  - POST /obavestenja/korisnik/toggle   body: { link_id, procitano, korisnik_id? }
+  //  - POST /obavestenja/apoteka/toggle    body: { link_id, procitano }
+  //  - POST /obavestenja/admin/toggle      body: { link_id, procitano }
+  const body = { link_id: linkId, procitano: !!procitano };
+  if (type === 'korisnik' && korisnikIdForGuardian != null){
+    // staratelj menja status na korisnikovim obaveštenjima
+    body.korisnik_id = korisnikIdForGuardian;
+  }
+  const path = (type === 'korisnik')
+    ? '/obavestenja/korisnik/toggle'
+    : (type === 'apoteka')
+      ? '/obavestenja/apoteka/toggle'
+      : '/obavestenja/admin/toggle';
+  await api(path, { method:'POST', body });
+}
+
+
+
+
 
 /* ------------------------------------------------------------------ *
  *  ROUTER

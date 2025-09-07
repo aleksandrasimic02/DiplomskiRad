@@ -1,5 +1,6 @@
 from http.client import HTTPException
 
+from app.crud.obavestenje import add_apoteka, add_korisnik
 from fastapi import APIRouter, Depends, Query
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
@@ -171,4 +172,6 @@ def apoteka_obrisi_pretplatu(
     db.query(PretplataLek).filter(PretplataLek.id_pretplate == pretplata_id).delete(synchronize_session=False)
     db.delete(p)
     db.commit()
+    add_korisnik(db=db, obavestenje_id=7, korisnik_id=p.id_korisnika)
+    add_apoteka(db=db, obavestenje_id=7, apoteka_id=apoteka.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

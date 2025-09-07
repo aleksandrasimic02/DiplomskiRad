@@ -1,3 +1,4 @@
+from app.crud.obavestenje import add_apoteka, add_korisnik
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -91,10 +92,13 @@ def odobri_pretplatu(
 
     # 4) Re-izračunaj status pretplate na osnovu svih stavki (sve apoteke)
     db.flush()
-    _recompute_aktivna(db, p.id)
+    _recompute_aktivna(db=db, pretplata_id=p.id, id_apoteke=apoteka.id)
     db.commit()
     db.refresh(p)
     print(p.aktivna)
+
+    add_korisnik(db=db, obavestenje_id=2, korisnik_id=p.id_korisnika)
+    add_apoteka(db=db, obavestenje_id=2, apoteka_id=apoteka.id)
 
     if not items:
         return PretplataStatusOut(

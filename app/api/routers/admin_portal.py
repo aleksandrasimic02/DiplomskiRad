@@ -1,3 +1,4 @@
+from app.crud.obavestenje import add_admin, add_korisnik
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,6 +25,9 @@ def odobri_nalog(payload: ApproveStarateljIn,
         return {"message": "Nalog je već odobren."}
     st.odobrio_admin = True
     db.commit()
+    add_admin(db=db, obavestenje_id=4, admin_id=1)
+    add_korisnik(db=db, obavestenje_id=4, korisnik_id=st.id_korisnika)
+
     return {"message": "Nalog staratelja odobren.", "staratelj_id": st.id}
 
 @router.delete("/obrisiNalog", status_code=204)

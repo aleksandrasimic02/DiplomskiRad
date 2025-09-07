@@ -1,3 +1,5 @@
+from app.crud.obavestenje import add_apoteka, add_korisnik
+from app.models.lek import Lek
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 
 from app.core.auth_deps import get_korisnik_id_from_korisnik_or_staratelj, get_current_korisnik
@@ -84,9 +86,21 @@ def korisnik_obrisi_pretplatu(
     if not p:
         raise HTTPException(status_code=404, detail="Pretplata nije pronađena.")
 
+    apoteka_ids = [
+        aid for (aid,) in (
+            db.query(Lek.id_apoteke)
+              .join(PretplataLek, PretplataLek.id_leka == Lek.id)
+              .filter(PretplataLek.id_pretplate == pretplata_id)
+              .distinct()
+              .all()
+        ) if aid is not None
+    ]
     db.query(PretplataLek).filter(PretplataLek.id_pretplate == pretplata_id).delete(synchronize_session=False)
     db.delete(p)
     db.commit()
+    add_korisnik(db=db, obavestenje_id=7, korisnik_id=korisnik.id)
+    for aid in apoteka_ids:
+            add_apoteka(db=db, obavestenje_id=7, apoteka_id=aid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.delete("/obrisiNalog", status_code=204)

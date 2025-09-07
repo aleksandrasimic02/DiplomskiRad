@@ -1,3 +1,4 @@
+from app.crud.obavestenje import add_admin, add_korisnik
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg2._psycopg import IntegrityError
 from sqlalchemy.orm import Session
@@ -83,6 +84,8 @@ def register_staratelj(payload: RegisterStaratelj, db: Session = Depends(get_db)
     db.add(obj)
     try:
         db.commit()
+        add_korisnik(db=db, obavestenje_id=5, korisnik_id=payload.id_korisnika)
+        add_admin(db=db, obavestenje_id=5, admin_id=1)
     except IntegrityError:
         db.rollback()
         # ako postoji UNIQUE indeks na staratelji(id_korisnika), ovde ga hvatamo

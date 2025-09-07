@@ -14,11 +14,6 @@ WORKDIR /app
 # Ako imaš requirements.txt koristi njega; ako nemaš, ova linija je fallback
  COPY requirements.txt ./
  RUN pip install --timeout 10000 -r requirements.txt
-#RUN pip install \
-#    "fastapi>=0.110" "uvicorn[standard]>=0.29" \
-#    "SQLAlchemy>=2.0" "psycopg2-binary>=2.9" \
-#    "python-multipart>=0.0.9" "passlib[bcrypt]>=1.7" \
-#    "python-dotenv>=1.0" "pydantic>=2.6"
 
 # kopiramo backend kod
 COPY app ./app

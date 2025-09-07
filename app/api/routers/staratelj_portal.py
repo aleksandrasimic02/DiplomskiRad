@@ -1,3 +1,5 @@
+from app.crud.obavestenje import add_apoteka, add_korisnik
+from app.models.lek import Lek
 from fastapi import APIRouter, Depends, Response, status, HTTPException
 
 from app.models.pretplata import Pretplata
@@ -19,8 +21,10 @@ router = APIRouter(prefix="/staratelj", tags=["Staratelj portal"])
 
 @router.delete("/obrisiNalog", status_code=204)
 def obrisi_nalog(staratelj: Staratelj = Depends(get_current_staratelj), db: Session = Depends(get_db)):
+    id_korisnika = staratelj.id_korisnika
     db.delete(staratelj)
     db.commit()
+    add_korisnik(db=db, obavestenje_id=6, korisnik_id=id_korisnika)
     return
 
 @router.delete("/pretplate/{pretplata_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -38,10 +42,23 @@ def staratelj_obrisi_pretplatu(
     if not p:
         raise HTTPException(status_code=404, detail="Pretplata nije pronađena za korisnika kog nadzirete.")
 
+
+    apoteka_ids = [
+            aid for (aid,) in (
+                db.query(Lek.id_apoteke)
+                .join(PretplataLek, PretplataLek.id_leka == Lek.id)
+                .filter(PretplataLek.id_pretplate == pretplata_id)
+                .distinct()
+                .all()
+            ) if aid is not None
+        ]
     # obriši stavke pa pretplatu
     db.query(PretplataLek).filter(PretplataLek.id_pretplate == pretplata_id).delete(synchronize_session=False)
     db.delete(p)
     db.commit()
+    add_korisnik(db=db, obavestenje_id=7, korisnik_id=staratelj.id_korisnika)
+    for aid in apoteka_ids:
+            add_apoteka(db=db, obavestenje_id=7, apoteka_id=aid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
