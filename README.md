@@ -1,15 +1,23 @@
-# MediPlan – Quick Start (Docker Compose)
+# MediPlan – Quick Start
 
-## Zahtevi
+## Pokretanje sa cloud-a
+
+Aplikacija se nalazi na adresi http://72.60.176.62:8000/
+
+
+## Lokalno pokretanje
+
+### Zahtevi
 - Docker + Docker Compose plugin (Docker Desktop je OK)
 
-## Pokretanje
+### Pokretanje
 
 ```bash
 git clone https://github.com/aleksandrasimic02/DiplomskiRad.git
 cd DiplomskiRad
 docker compose up --build
 ```
+Aplikacija se nalazi na adresi http://localhost:8000
 
 
 ## Postojeci nalozi
@@ -23,4 +31,3 @@ Korisnik:    ana@example.com / user123
 Korisnik:    marko@example.com / user123
 ```
 
-Aplikacija se nalazi na adresi http://localhost:8000
