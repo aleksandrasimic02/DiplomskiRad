@@ -5,7 +5,8 @@ psycopg2-binary
 pydantic
 pydantic-settings
 pydantic[email]
-passlib[bcrypt]
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
 python-jose
 python-multipart
 pydantic>=2.5,<3
