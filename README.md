@@ -2,7 +2,7 @@
 
 ## Pokretanje sa cloud-a
 
-Aplikacija se nalazi na adresi http://72.60.176.62:8000/
+Aplikacija se nalazi na adresi http://72.61.184.234:8000/
 
 
 ## Lokalno pokretanje
