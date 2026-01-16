@@ -14,6 +14,7 @@ from app.models.admin import Administrator
 from app.models.apoteka import Apoteka
 from app.models.lek import Lek
 from app.models.obavestenje import Obavestenje
+from app.models.staratelj import Staratelj
 
 
 
@@ -1308,6 +1309,34 @@ def create_sample_data(db: Session) -> dict:
     for k in (k1, k2, k3):
         db.refresh(k)
 
+    # === Staratelji (2 kom): jedan odobren, jedan neodobren ===
+    s1 = Staratelj(
+        ime="Milan",
+        prezime="Stupar",
+        email="milan.stupar@example.com",
+        broj_telefona="+381661234001",
+        id_korisnika=k1.id,
+        dokument_starateljstva="dok1.pdf",
+        sifra_hash=get_password_hash("star123"),
+        odobrio_admin=True,
+    )
+
+    s2 = Staratelj(
+        ime="Jelena",
+        prezime="Horvat",
+        email="jelena.horvat@example.com",
+        broj_telefona="+381661234002",
+        id_korisnika=k2.id,
+        dokument_starateljstva="dok2.pdf",
+        sifra_hash=get_password_hash("star123"),
+        odobrio_admin=False,
+    )
+
+    db.add_all([s1, s2])
+    db.commit()
+    db.refresh(s1)
+    db.refresh(s2)
+
     # === Lekovi: po 10 za svaku apoteku ===
     _seed_lekovi_for_apoteka1(db, ap1)
     _seed_lekovi_for_apoteka2(db, ap2)
@@ -1324,6 +1353,10 @@ def create_sample_data(db: Session) -> dict:
         {"email": k1.email, "password": "user123"},
         {"email": k2.email, "password": "user123"},
         {"email": k3.email, "password": "user123"},
+    ]
+    out["staratelji"] = [
+        {"email": s1.email, "password": "star123"},
+        {"email": s2.email, "password": "star123"},
     ]
     return out
 
