@@ -29,5 +29,7 @@ Apoteka:     dunav@pharm.rs / dunav123
 Korisnik:    petar@example.com / user123
 Korisnik:    ana@example.com / user123
 Korisnik:    marko@example.com / user123
+Staratelj:   milan.stupar@example.com / 1 / star123
+Staratelj:   jelena.horvat@example.com / 2 / star123
 ```
 
